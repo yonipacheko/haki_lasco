@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "HAKI Lasco Workspace"
+description = "An interactive desktop-first UX prototype for designing a simplified scaffold around a building. Explore a 3D workspace, place components, adjust levels, and review illustrative parts data."
+version = "1.0.0"
+id = "artifacts/lasco-workspace"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18258
+
+[services.development]
+run = "pnpm --filter @workspace/lasco-workspace run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lasco-workspace", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/lasco-workspace/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18258"
+BASE_PATH = "/"
