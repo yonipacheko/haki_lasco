@@ -1,6 +1,6 @@
-# [Project name]
+# HAKI Lasco Workspace
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+An interactive desktop-first UX demonstration of scaffold design around a simple building.
 
 ## Run & Operate
 
@@ -30,7 +30,9 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The user explicitly requested a UX demonstration, not production scaffolding or engineering software. Keep the 3D model visible, dock routine tools and settings outside it, and clearly label all sample counts, dimensions and indicators as illustrative.
+
+The demo supports starter scaffold generation, bay and level selection, snapped component placement, scaffold configuration, and a level/parts comparison panel. State is session-only; no construction validation or verified calculations are provided.
 
 ## User preferences
 

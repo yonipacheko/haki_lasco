@@ -1,0 +1,1 @@
+- [3D preview compatibility](3d-preview-compatibility.md) — the preview capture browser may lack WebGL; preserve an interactive rendering fallback.
