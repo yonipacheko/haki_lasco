@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { SVGRenderer } from 'three/examples/jsm/renderers/SVGRenderer.js';
-import { createComponent, type PlacedComponent } from './scaffold-component';
+import { ContextualActions, type ContextualActionGroup } from './contextual-actions';
+import { scaffoldScene, componentScene } from './scaffold-scene';
+import { availableDirections, cellElevation, editCells, elevations, partsSummary, previewBay, previewLift, removeLift as removeModelLift, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
 import {
-  Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, Clock3, Columns3, Eye, Grid2X2, Layers3, Minus, Move, Plus, RotateCcw, Ruler, Search, Shield, SlidersHorizontal, Star, X,
+  Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Search, Shield, Star, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 type Category = 'All' | 'Structure' | 'Decking' | 'Access' | 'Protection';
 type ToolItem = { name: string; category: Exclude<Category, 'All'>; code: string; Icon: LucideIcon; favorite?: boolean };
-type LevelOptions = Record<number, { deck: boolean; guardrails: boolean }>;
-type SceneConfig = { starter: boolean; bays: number; lifts: number; bayWidth: number; liftHeight: number; finish: string; deck: boolean; guardrails: boolean; stair: boolean; selected: string; preview: string | null; placed: PlacedComponent[]; levelOptions: LevelOptions };
+type SceneConfig = { starter: boolean; model: ScaffoldModel; selection: Selection | null; selectionMode: SelectionKind; preview: string | null; placed: ComponentPlacement[]; operation: AdditionPreview | null; stair: boolean };
 
 const tools: ToolItem[] = [
   { name: 'Standard', category: 'Structure', code: 'S-200', Icon: Columns3, favorite: true },
@@ -26,10 +27,8 @@ const tools: ToolItem[] = [
   { name: 'End frame', category: 'Protection', code: 'E-100', Icon: Box },
 ];
 const categoryList: Category[] = ['All', 'Structure', 'Decking', 'Access', 'Protection'];
-const selectedDefault = 'Building';
-const elevations = ['North', 'East', 'South', 'West'];
 
-function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMode }: { config: SceneConfig; onSelect: (value: string) => void; onPlace: () => void; onCancel: () => void; resetToken: number; viewMode: 'orbit' | 'pan' }) {
+function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMode }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; resetToken: number; viewMode: 'orbit' | 'pan' }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -97,18 +96,17 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
     let pointerStart = { x: 0, y: 0 };
     const pointerDown = (event: PointerEvent) => { pointerStart = { x: event.clientX, y: event.clientY }; };
     const click = (event: PointerEvent) => {
+      if (event.button !== 0) return;
       if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) return;
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObjects(group.children, true).find(x => x.object.userData.selectable || x.object.userData.placement);
+      const hit = raycaster.intersectObjects(group.children, true).find(x => x.object.userData.hit || x.object.userData.selectable);
+      // Layout previews only apply via their explicit confirmation controls.
+      if (configRef.current.operation) return;
       if (configRef.current.preview) { onPlaceRef.current(); return; }
-      if (hit?.object.userData.selectable) {
-        const value = String(hit.object.userData.selectable);
-        const level = value.match(/Level (\d+)/)?.[1];
-        onSelectRef.current(event.shiftKey && level ? `Level ${level}` : value);
-      }
-      else if (configRef.current.preview) onPlaceRef.current();
+      if (hit?.object.userData.hit) onSelectRef.current({ ...hit.object.userData.hit, kind: event.shiftKey ? 'Lift' : configRef.current.selectionMode });
+      else onSelectRef.current(null);
     };
     renderer.domElement.addEventListener('dblclick', () => controls.reset());
     host.addEventListener('pointerdown', pointerDown);
@@ -122,7 +120,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
       camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); renderer.setSize(width, height);
     };
     const observer = new ResizeObserver(resize); observer.observe(host);
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && configRef.current.preview) onCancelRef.current(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (configRef.current.preview || configRef.current.operation)) onCancelRef.current(); };
     window.addEventListener('keydown', onKey);
     return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('keydown', onKey); host.removeEventListener('pointerdown', pointerDown); host.removeEventListener('pointerup', click); controls.dispose(); if (renderer instanceof THREE.WebGLRenderer) renderer.dispose(); rendererRef.current = null; host.removeChild(renderer.domElement); scene.clear(); };
   }, []);
@@ -134,7 +132,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
       const child = group.children.pop();
       if (child) child.traverse(obj => { const mesh = obj as THREE.Mesh; mesh.geometry?.dispose(); if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose()); else mesh.material?.dispose(); });
     }
-  const { starter, bays, lifts, bayWidth, liftHeight, finish, deck, guardrails, stair, selected, preview, placed, levelOptions } = config;
+    const { starter, model, selection, preview, placed, operation, stair } = config;
     const surface = (color: string, roughness = .7, opacity = 1, metalness = 0) => rendererRef.current instanceof SVGRenderer
       ? new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity })
       : new THREE.MeshStandardMaterial({ color, roughness, transparent: opacity < 1, opacity, metalness });
@@ -155,116 +153,10 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
     const roof = new THREE.Mesh(new THREE.BoxGeometry(7.8, .17, 6), edgeMat); roof.position.set(0, 9.04, 0); building.add(roof);
     const sideWin = new THREE.Mesh(new THREE.BoxGeometry(.05, 1.62, 1.36), glassMat); sideWin.position.set(3.82, 1.7, -.7); building.add(sideWin);
     group.add(building);
-    const scaffoldGroup = new THREE.Group();
-    const steel = surface(finish === 'blue' ? '#467da2' : '#7894a6', .42, 1, .48);
-    const steelLite = surface('#89a5b8', .48, 1, .34);
-    const deckMat = surface('#b8c9d3', .76, .92);
-    const gold = surface('#c5a26a', .5, 1, .24);
-    const bar = (a: THREE.Vector3, b: THREE.Vector3, radius = .055, mat = steel, selectable = '') => {
-      const mid = a.clone().add(b).multiplyScalar(.5); const delta = b.clone().sub(a);
-      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 8), mat);
-      mesh.position.copy(mid); mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize()); mesh.castShadow = true;
-      if (selectable) mesh.userData.selectable = selectable;
-      scaffoldGroup.add(mesh);
-       return mesh;
-    };
     if (starter) {
-      const baySize = bayWidth; const scaffoldWidth = Math.max(1, bays) * baySize;
-       const xStart = -scaffoldWidth / 2; const zFront = Math.max(4.25, scaffoldWidth / 2 + .5); const levelGap = liftHeight;
-      const floors = Math.max(1, lifts);
-      for (let i = 0; i <= bays; i++) {
-        const x = xStart + i * baySize;
-        bar(new THREE.Vector3(x, .12, zFront), new THREE.Vector3(x, floors * levelGap + .25, zFront), .075, steel, `Bay ${String(Math.min(i + 1, bays)).padStart(2, '0')} · Level 01`);
-        bar(new THREE.Vector3(x, .12, zFront + 1.15), new THREE.Vector3(x, floors * levelGap + .25, zFront + 1.15), .065, steelLite);
-        const base = new THREE.Mesh(new THREE.CylinderGeometry(.17, .21, .12, 12), gold); base.position.set(x, .06, zFront); scaffoldGroup.add(base);
-      }
-      for (let level = 0; level <= lifts; level++) {
-        const y = .16 + level * levelGap;
-        for (let i = 0; i < bays; i++) {
-          const x1 = xStart + i * baySize, x2 = x1 + baySize;
-          const label = `Bay ${String(i + 1).padStart(2, '0')} · Level ${String(Math.max(1, level)).padStart(2, '0')}`;
-          bar(new THREE.Vector3(x1, y, zFront), new THREE.Vector3(x2, y, zFront), .048, steelLite, label);
-          bar(new THREE.Vector3(x1, y, zFront + 1.15), new THREE.Vector3(x2, y, zFront + 1.15), .044, steelLite);
-          bar(new THREE.Vector3(x1, y, zFront), new THREE.Vector3(x1, y, zFront + 1.15), .04, steelLite);
-          bar(new THREE.Vector3(x2, y, zFront), new THREE.Vector3(x2, y, zFront + 1.15), .04, steelLite);
-        }
-         if (level > 0 && (levelOptions[level]?.deck ?? deck)) for (let i = 0; i < bays; i++) {
-          const x = xStart + i * baySize + baySize / 2;
-          const platform = new THREE.Mesh(new THREE.BoxGeometry(baySize - .11, .12, 1.03), deckMat);
-          platform.position.set(x, y - .11, zFront + .57); platform.castShadow = true;
-          platform.userData.selectable = `Bay ${String(i + 1).padStart(2, '0')} · Level ${String(level).padStart(2, '0')}`; scaffoldGroup.add(platform);
-          const edgeLine = new THREE.Mesh(new THREE.BoxGeometry(baySize - .13, .025, .025), gold); edgeLine.position.set(x, y - .03, zFront + 1.08); scaffoldGroup.add(edgeLine);
-        }
-      }
-       for (let level = 1; level <= lifts; level++) {
-         if (!(levelOptions[level]?.guardrails ?? guardrails)) continue;
-        const y = level * levelGap + .95;
-        for (let i = 0; i < bays; i++) {
-          const x1 = xStart + i * baySize, x2 = x1 + baySize;
-          bar(new THREE.Vector3(x1, y, zFront), new THREE.Vector3(x2, y, zFront), .032, gold);
-          bar(new THREE.Vector3(x1, y - .55, zFront), new THREE.Vector3(x2, y - .55, zFront), .027, gold);
-        }
-      }
-      if (bays > 0 && lifts > 0) {
-        for (let k = 0; k < bays; k++) {
-          const x = xStart + k * baySize;
-          bar(new THREE.Vector3(x, .2, zFront), new THREE.Vector3(x + baySize, levelGap, zFront), .037, steelLite, `Bay ${String(k + 1).padStart(2, '0')} · Level 01`);
-          bar(new THREE.Vector3(x + baySize, .2, zFront), new THREE.Vector3(x, levelGap, zFront), .037, steelLite);
-          if (lifts > 1) {
-            bar(new THREE.Vector3(x, levelGap + .15, zFront), new THREE.Vector3(x + baySize, levelGap * 2 - .1, zFront), .037, steelLite);
-            bar(new THREE.Vector3(x + baySize, levelGap + .15, zFront), new THREE.Vector3(x, levelGap * 2 - .1, zFront), .037, steelLite);
-          }
-        }
-      }
-      if (stair) {
-         const sx = xStart + scaffoldWidth + .75, sz = zFront + .25;
-         bar(new THREE.Vector3(sx, 0, sz), new THREE.Vector3(sx, lifts * levelGap, sz), .06, steel).userData.stair = true;
-         bar(new THREE.Vector3(sx + .95, 0, sz), new THREE.Vector3(sx + .95, lifts * levelGap, sz), .06, steel).userData.stair = true;
-        for (let y = 1; y <= lifts * levelGap; y++) {
-           const step = new THREE.Mesh(new THREE.BoxGeometry(.95, .045, .3), deckMat); step.position.set(sx + .48, y, sz + (y % 3) * .18); step.userData.stair = true; scaffoldGroup.add(step);
-        }
-         bar(new THREE.Vector3(sx, .2, sz + .15), new THREE.Vector3(sx + .95, levelGap, sz + .7), .035, steelLite).userData.stair = true;
-      }
+      group.add(scaffoldScene(model, surface, selection, operation, stair));
+      group.add(componentScene(model, placed, preview, selection, surface));
     }
-     if (starter) {
-       for (let side = 0; side < 4; side++) {
-         const elevation = side === 0 ? scaffoldGroup : scaffoldGroup.clone();
-         if (side !== 0) elevation.children.filter(object => object.userData.stair).forEach(object => elevation.remove(object));
-         elevation.rotation.y = side * Math.PI / 2;
-         elevation.traverse(object => {
-           if (object.userData.selectable) object.userData.selectable = `${String(object.userData.selectable).split(' · ').slice(0, 2).join(' · ')} · ${elevations[side]}`;
-         });
-         group.add(elevation);
-       }
-     }
-    const selectedLevel = selected && selected.includes('Level') ? selected : '';
-    if (selectedLevel && starter) {
-      const match = selectedLevel.match(/Level 0?(\d)/); const level = match ? Number(match[1]) : 1;
-      const x = (selectedLevel.match(/Bay 0?(\d)/)?.[1] ? Number(selectedLevel.match(/Bay 0?(\d)/)?.[1]) : 1) - 1;
-      const selectedBayWidth = bayWidth; const xStart = -bays * selectedBayWidth / 2;
-       const isWholeLevel = !selected.includes('Bay');
-       const sideIndex = Math.max(0, elevations.findIndex(name => selected.includes(name)));
-       for (const side of isWholeLevel ? [0, 1, 2, 3] : [sideIndex]) {
-         const highlight = new THREE.Group();
-         const outline = new THREE.Mesh(new THREE.BoxGeometry(isWholeLevel ? bays * bayWidth : selectedBayWidth, .14, 1.22), new THREE.MeshBasicMaterial({ color: '#d4a85f', transparent: true, opacity: .55 }));
-         outline.position.set(isWholeLevel ? 0 : xStart + x * selectedBayWidth + selectedBayWidth / 2, level * liftHeight + .08, Math.max(4.25, bays * bayWidth / 2 + .5) + .57);
-         outline.userData.selectable = selectedLevel; highlight.add(outline);
-         highlight.rotation.y = side * Math.PI / 2; group.add(highlight);
-       }
-    }
-     const addComponent = (name: string, bay: number, level: number, side: number, isPreview: boolean) => {
-       const mat = surface(isPreview ? '#318ac4' : '#245a87', .6, isPreview ? .55 : 1);
-       mat.depthWrite = !isPreview;
-       const component = createComponent(name, mat, bayWidth, liftHeight);
-       component.position.set(-bays * bayWidth / 2 + (bay - .5) * bayWidth, level * liftHeight + .1, Math.max(4.25, bays * bayWidth / 2 + .5));
-       component.traverse(object => {
-         object.userData.placement = isPreview;
-         if (!isPreview) object.userData.selectable = `Bay ${String(bay).padStart(2, '0')} · Level ${String(level).padStart(2, '0')} · ${elevations[side]}`;
-       });
-       const wrapper = new THREE.Group(); wrapper.add(component); wrapper.rotation.y = side * Math.PI / 2; group.add(wrapper);
-     };
-     if (starter) placed.filter(item => item.bay <= bays && item.level <= lifts && (item.name !== 'Steel deck' || (levelOptions[item.level]?.deck ?? deck)) && (item.name !== 'Guardrail' || (levelOptions[item.level]?.guardrails ?? guardrails))).forEach(item => addComponent(item.name, item.bay, item.level, item.side, false));
-     if (preview) addComponent(preview, Math.min(bays, Number(selected.match(/Bay (\d+)/)?.[1] ?? 1)), Math.min(lifts, Number(selected.match(/Level (\d+)/)?.[1] ?? 1)), Math.max(0, elevations.findIndex(name => selected.includes(name))), true);
   }, [config]);
 
   useEffect(() => {
@@ -280,26 +172,23 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
 
 function App() {
   const [starter, setStarter] = useState(false);
-  const [bays, setBays] = useState(3);
-  const [lifts, setLifts] = useState(3);
-  const [bayWidth, setBayWidth] = useState(2.5);
-  const [liftHeight, setLiftHeight] = useState(3);
-  const [finish, setFinish] = useState('galv');
-  const [showLabels, setShowLabels] = useState(true);
-  const [workArea, setWorkArea] = useState('North elevation');
-  const [deck, setDeck] = useState(true);
-  const [guardrails, setGuardrails] = useState(true);
+  const [model, setModel] = useState<ScaffoldModel>(starterModel);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [selectionMode, setSelectionMode] = useState<SelectionKind>('Bay');
+  const [operation, setOperation] = useState<AdditionPreview | null>(null);
+  const [action, setAction] = useState<string | null>(null);
+  const [draftWidth, setDraftWidth] = useState(2.5);
+  const [draftHeight, setDraftHeight] = useState(3);
+  const [draftDirection, setDraftDirection] = useState('right');
+  const [draftDeck, setDraftDeck] = useState(true);
+  const [draftOptions, setDraftOptions] = useState({ guardrails: true, braces: true, brackets: false });
   const [stair, setStair] = useState(false);
-  const [placed, setPlaced] = useState<PlacedComponent[]>([]);
-  const [levelOptions, setLevelOptions] = useState<LevelOptions>({});
+  const [placed, setPlaced] = useState<ComponentPlacement[]>([]);
   const [leftOpen, setLeftOpen] = useState(() => window.innerWidth > 740);
-  const [rightOpen, setRightOpen] = useState(() => window.innerWidth > 740);
   const [bottomOpen, setBottomOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [category, setCategory] = useState<Category>('All');
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState<string | null>(null);
-  const [selected, setSelected] = useState(selectedDefault);
   const [bottomTab, setBottomTab] = useState<'Levels' | 'Parts summary'>('Levels');
   const [favSet, setFavSet] = useState<string[]>(tools.filter(t => t.favorite).map(t => t.name));
   const [recent, setRecent] = useState<string[]>(['Standard', 'Ledger', 'Steel deck']);
@@ -312,87 +201,133 @@ function App() {
     if (toastRef.current) window.clearTimeout(toastRef.current);
     toastRef.current = window.setTimeout(() => setNotice(''), 2400);
   }, []);
-  const config = useMemo<SceneConfig>(() => ({ starter, bays, lifts, bayWidth, liftHeight, finish, deck, guardrails, stair, selected, preview, placed, levelOptions }), [starter, bays, lifts, bayWidth, liftHeight, finish, deck, guardrails, stair, selected, preview, placed, levelOptions]);
+  const config = useMemo<SceneConfig>(() => ({ starter, model, selection, selectionMode, operation, preview, placed, stair }), [starter, model, selection, selectionMode, operation, preview, placed, stair]);
   const filteredTools = useMemo(() => tools.filter(t => (category === 'All' || t.category === category) && t.name.toLowerCase().includes(query.toLowerCase())), [category, query]);
-  const parts = useMemo(() => {
-    const deckLevels = Array.from({ length: lifts }, (_, i) => i + 1).filter(level => levelOptions[level]?.deck ?? deck).length;
-    const railLevels = Array.from({ length: lifts }, (_, i) => i + 1).filter(level => levelOptions[level]?.guardrails ?? guardrails).length;
-    return [
-       ['Standards', starter ? (bays + 1) * 8 + placed.filter(p => p.name === 'Standard').length : 0],
-       ['Ledgers', starter ? bays * (lifts + 1) * 8 + placed.filter(p => p.name === 'Ledger').length : 0],
-       ['Diagonal braces', starter ? bays * Math.min(lifts, 2) * 8 + placed.filter(p => p.name === 'Diagonal brace').length : 0],
-       ['Deck units', starter ? bays * deckLevels * 4 + placed.filter(p => p.name === 'Steel deck' && (levelOptions[p.level]?.deck ?? deck)).length : 0],
-       ['Guardrails', starter ? bays * railLevels * 8 + placed.filter(p => p.name === 'Guardrail' && (levelOptions[p.level]?.guardrails ?? guardrails)).length : 0],
-       ['Stair towers', starter && stair ? 1 : 0],
-       ['Placed components', placed.length],
-    ];
-   }, [starter, bays, lifts, deck, guardrails, stair, placed, levelOptions]);
+  const parts = useMemo(() => partsSummary(starter ? model : [], placed, starter && stair), [starter, model, placed, stair]);
+  const selectedBay = model.find(bay => bay.id === selection?.bayId) ?? model[0];
+  const lifts = Math.max(...model.map(bay => bay.cells.length));
+  const levels = starter ? Array.from({ length: lifts }, (_, i) => i + 1) : [];
+  const activeLevel = selection?.level ?? 1;
+  const selected = selection ? selectionLabel(selection, model) : 'Building';
+  const clearAction = () => { setAction(null); setOperation(null); };
+  const selectObject = (value: Selection | null) => { clearAction(); setPreview(null); setSelection(value); if (value) setSelectionMode(value.kind); };
+  const cancelPlacement = useCallback(() => { setPreview(null); setOperation(null); setAction(null); notify('Preview cancelled'); }, [notify]);
   const place = useCallback(() => {
     if (!preview) return;
     setStarter(true);
-    if (preview.toLowerCase().includes('deck')) setDeck(true);
-    if (preview.toLowerCase().includes('guard')) setGuardrails(true);
-     const level = Math.min(lifts, Number(selected.match(/Level (\d+)/)?.[1] ?? 1));
-     if (preview === 'Steel deck' || preview === 'Guardrail') setLevelOptions(options => ({ ...options, [level]: { deck: options[level]?.deck ?? deck, guardrails: options[level]?.guardrails ?? guardrails, [preview === 'Steel deck' ? 'deck' : 'guardrails']: true } }));
-     setPlaced(items => [...items, { id: Date.now(), name: preview, bay: Math.min(bays, Number(selected.match(/Bay (\d+)/)?.[1] ?? 1)), level: Math.min(lifts, Number(selected.match(/Level (\d+)/)?.[1] ?? 1)), side: Math.max(0, elevations.findIndex(name => selected.includes(name))) }]);
+    const target: Selection = { kind: 'Unit', bayId: selectedBay.id, level: Math.min(activeLevel, selectedBay.cells.length) };
+    if (preview === 'Steel deck' || preview === 'Guardrail') setModel(value => editCells(value, target, preview === 'Steel deck' ? { deck: true } : { guardrails: true }));
+    setPlaced(items => [...items, { id: Date.now(), name: preview, bayId: target.bayId, level: target.level }]);
+    if (preview === 'Stair flight') setStair(true);
     setRecent(prev => [preview, ...prev.filter(item => item !== preview)].slice(0, 3));
-    notify(`${preview} placed at the active level`);
+    notify(`${preview} placed at lift ${target.level}`);
     setPreview(null);
-   }, [preview, notify, selected, bays, lifts, deck, guardrails]);
-  const cancelPlacement = useCallback(() => { setPreview(null); notify('Placement cancelled'); }, [notify]);
+  }, [preview, notify, selectedBay, activeLevel]);
   const chooseTool = (name: string) => {
+    clearAction();
     setStarter(true);
     setPreview(name);
     setRecent(prev => [name, ...prev.filter(item => item !== name)].slice(0, 3));
   };
-  const selectObject = (value: string) => {
-    setSelected(value);
-    if (value !== 'Building') {
-      const match = value.match(/Bay 0?(\d)/);
-      if (match) setSelected(value);
-    }
-  };
-  const activeLevel = selected.includes('Level') ? Number(selected.match(/Level 0?(\d)/)?.[1] ?? 1) : 2;
-   const activeBay = String(selected.match(/Bay (\d+)/)?.[1] ?? '01').padStart(2, '0');
-  const activeDeck = selected.includes('Level') ? levelOptions[activeLevel]?.deck ?? deck : deck;
-  const activeGuardrails = selected.includes('Level') ? levelOptions[activeLevel]?.guardrails ?? guardrails : guardrails;
-  const toggleLevelOption = (key: 'deck' | 'guardrails') => {
-    if (!selected.includes('Level')) {
-      if (key === 'deck') setDeck(value => !value); else setGuardrails(value => !value);
-      setLevelOptions({});
-      return;
-    }
-    setLevelOptions(options => ({ ...options, [activeLevel]: { deck: options[activeLevel]?.deck ?? deck, guardrails: options[activeLevel]?.guardrails ?? guardrails, [key]: !(key === 'deck' ? activeDeck : activeGuardrails) } }));
-  };
-  const levels = Array.from({ length: Math.max(lifts, 1) }, (_, i) => i + 1);
   const toggleFavorite = (name: string) => setFavSet(prev => prev.includes(name) ? prev.filter(v => v !== name) : [...prev, name]);
-   const generate = () => { setStarter(true); setPreview(null); setSelected('Bay 02 · Level 02 · North'); notify('Starter scaffold added around the building'); };
-   const addBay = () => { if (bays >= 6) { notify('Prototype limit: six bays per elevation'); return; } setStarter(true); setBays(v => v + 1); notify('Bay added'); };
-   const removeBay = () => { if (bays > 1) { setBays(v => v - 1); setPlaced(items => items.filter(item => item.bay < bays)); setSelected(`Bay 01 · Level ${String(Math.min(activeLevel, lifts)).padStart(2, '0')} · North`); notify('Bay removed'); } };
-   const addLift = () => { if (lifts >= 5) { notify('Prototype limit: five lifts'); return; } setStarter(true); setLifts(v => v + 1); notify('Lift added'); };
-   const removeLift = () => { if (lifts > 1) { setLifts(v => v - 1); setPlaced(items => items.filter(item => item.level < lifts)); setLevelOptions(options => Object.fromEntries(Object.entries(options).filter(([level]) => Number(level) < lifts))); setSelected(`Level ${String(Math.min(activeLevel, lifts - 1)).padStart(2, '0')}`); notify('Lift removed'); } };
+  const generate = () => { setStarter(true); setPreview(null); selectObject({ kind: 'Bay', bayId: '0-3', level: 2 }); notify('Starter scaffold added around the building'); };
+  const directions = selection ? availableDirections(model, selection.bayId) : [];
+  const actionGroups: ContextualActionGroup[] = !selection ? [] : selection.kind === 'Bay' ? [
+    { label: 'Configure', actions: [{ id: 'length', label: 'Bay length' }, { id: 'decking', label: 'Decking' }] },
+    { label: 'Extend & remove', actions: [
+      { id: 'add-bay', label: 'Add neighboring bay', disabled: !directions.length, reason: !directions.length ? 'Select an end bay with free space (six-bay limit).' : undefined },
+      { id: 'remove-bay', label: 'Remove bay', danger: true, disabled: model.filter(bay => bay.side === selectedBay.side).length <= 1, reason: 'Keep at least one bay per elevation.' },
+    ] },
+  ] : selection.kind === 'Lift' ? [
+    { label: 'Configure this lift', actions: [{ id: 'height', label: 'Lift height' }, { id: 'decking', label: 'Decking' }, { id: 'options', label: 'Guards, braces & brackets' }] },
+    { label: 'All bays', actions: [
+      { id: 'add-lift', label: 'Add top lift', disabled: lifts >= 5, reason: 'Prototype limit: five lifts per bay.' },
+      { id: 'remove-lift', label: 'Remove this lift', danger: true, disabled: !removeModelLift(model, selection, false), reason: 'Keep at least one lift per bay.' },
+    ] },
+    { label: `Bay ${String(selectedBay.number).padStart(2, '0')} · ${elevations[selectedBay.side]}`, actions: [
+      { id: 'add-local-lift', label: 'Add lift on this bay', disabled: selectedBay.cells.length >= 5, reason: 'Prototype limit: five lifts per bay.' },
+      { id: 'remove-local-lift', label: 'Remove lift on this bay', danger: true, disabled: !removeModelLift(model, selection, true), reason: 'This bay must contain the selected lift and retain one lift.' },
+    ] },
+  ] : [{ label: 'Configure this unit', actions: [{ id: 'decking', label: 'Decking' }, { id: 'options', label: 'Guards, braces & brackets' }] }];
+  const actionTitle = actionGroups.flatMap(group => group.actions).find(item => item.id === action)?.label;
+  const buildAddition = (id: string, width = draftWidth, height = draftHeight, direction = draftDirection) => !selection ? null
+    : id === 'add-bay' ? previewBay(model, selection.bayId, direction, width)
+    : previewLift(model, selection.bayId, id === 'add-local-lift', height);
+  const beginAction = (id: string) => {
+    if (!selection) return;
+    setPreview(null);
+    setAction(id);
+    const cell = targetCells(model, selection)[0]?.cell ?? selectedBay.cells[0];
+    setDraftWidth(selectedBay.width); setDraftHeight(cell.height);
+    setDraftDeck(cell.deck);
+    setDraftOptions({ guardrails: cell.guardrails, braces: cell.braces, brackets: cell.brackets });
+    const direction = directions[0] ?? 'right'; setDraftDirection(direction);
+    setOperation(id.startsWith('add-') ? buildAddition(id, selectedBay.width, cell.height, direction) : null);
+  };
+  const applyAction = () => {
+    if (!selection || !action) return;
+    if (action.startsWith('add-')) {
+      if (!operation) return;
+      setModel(operation.model);
+      if (operation.addedBayId) setSelection({ kind: 'Bay', bayId: operation.addedBayId, level: selection.level });
+      else if (operation.addedCells[0]) setSelection({ kind: 'Lift', ...(operation.addedCells.find(cell => cell.bayId === selection.bayId) ?? operation.addedCells[0]) });
+    } else if (action === 'remove-bay') {
+      const next = model.filter(bay => bay.id !== selection.bayId);
+      setModel(next); setPlaced(items => items.filter(item => item.bayId !== selection.bayId));
+      setSelection(null);
+    } else if (action === 'remove-lift' || action === 'remove-local-lift') {
+      const onlyBay = action === 'remove-local-lift';
+      const next = removeModelLift(model, selection, onlyBay);
+      if (!next) return;
+      const changed = new Set(model.filter(bay => (!onlyBay || bay.id === selection.bayId) && bay.cells.length >= selection.level).map(bay => bay.id));
+      setModel(next);
+      setPlaced(items => items.filter(item => !changed.has(item.bayId) || item.level !== selection.level).map(item => changed.has(item.bayId) && item.level > selection.level ? { ...item, level: item.level - 1 } : item));
+      setSelection(null);
+    } else if (action === 'length') setModel(value => value.map(bay => bay.id === selection.bayId ? { ...bay, width: draftWidth } : bay));
+    else setModel(value => editCells(value, selection, action === 'height' ? { height: draftHeight } : action === 'decking' ? { deck: draftDeck } : draftOptions));
+    notify(`${actionTitle} applied · illustrative geometry`);
+    clearAction();
+  };
+  const detail = action && selection ? (
+    <form onSubmit={event => { event.preventDefault(); applyAction(); }}>
+      <p className="context-note">{selection.kind === 'Bay' ? 'Only the selected bay.' : selection.kind === 'Unit' ? 'Only this bay and lift unit.' : action.includes('local') ? `Only Bay ${selectedBay.number} · ${elevations[selectedBay.side]}.` : 'Applies across all bays with this lift.'}</p>
+      {action === 'add-bay' && <label className="context-field">Available direction<select value={draftDirection} onChange={event => { setDraftDirection(event.target.value); setOperation(buildAddition(action, draftWidth, draftHeight, event.target.value)); }} data-testid="select-direction">{directions.map(direction => <option key={direction} value={direction}>{direction === 'left' ? 'Left end' : 'Right end'}</option>)}</select></label>}
+      {(action === 'length' || action === 'add-bay') && <label className="context-field">Bay length · illustrative<select value={draftWidth} onChange={event => { const width = Number(event.target.value); setDraftWidth(width); if (action.startsWith('add-')) setOperation(buildAddition(action, width)); }} data-testid="select-bay-width"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
+      {(action === 'height' || action === 'add-lift' || action === 'add-local-lift') && <label className="context-field">Lift height · illustrative<select value={draftHeight} onChange={event => { const height = Number(event.target.value); setDraftHeight(height); if (action.startsWith('add-')) setOperation(buildAddition(action, draftWidth, height)); }} data-testid="select-lift-height"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
+      {action === 'decking' && <label className="context-field">Decking<select value={String(draftDeck)} onChange={event => setDraftDeck(event.target.value === 'true')} data-testid="select-decking"><option value="true">Included</option><option value="false">None</option></select></label>}
+      {action === 'options' && (['guardrails', 'braces', 'brackets'] as const).map(key => <label className="context-check" key={key}><input type="checkbox" checked={draftOptions[key]} onChange={event => setDraftOptions(value => ({ ...value, [key]: event.target.checked }))} data-testid={`toggle-${key}`} />{key === 'guardrails' ? 'Guard frames' : key === 'braces' ? 'Braces' : 'Brackets'}</label>)}
+      {action?.startsWith('remove-') && <p className="context-note">Remove the selected {action === 'remove-bay' ? 'bay and its placed components' : 'lift and its placed components'} from this session? This cannot be undone.</p>}
+      {operation && <p className="context-note preview-note" data-testid="preview-status"><strong>Snapped preview</strong><br />{operation.label}<br />Blue geometry is not added until you confirm.</p>}
+      {action.startsWith('add-') && !operation && <p className="context-note">No available space. Select an end bay or stay below the five-lift limit.</p>}
+      <div className="context-footer"><button type="button" className="secondary-button" onClick={clearAction} data-testid="cancel-action">Cancel</button><button type="submit" className="primary-button" disabled={action.startsWith('add-') && !operation} data-testid="apply-action">{operation ? 'Confirm addition' : action.startsWith('remove-') ? 'Remove' : 'Apply'}</button></div>
+    </form>
+  ) : null;
 
   return (
     <main className="workspace">
       <header className="topbar">
         <div className="brand"><div className="brand-mark">H</div><div><div className="brand-name">HAKI <span style={{ fontWeight: 500 }}>LASCO</span></div><div className="brand-sub">SCAFFOLD WORKSPACE</div></div></div>
         <div className="top-divider" />
-        <div><div className="project-name">{workArea} · Concept 01</div><div className="project-meta">Untitled project&nbsp; / &nbsp;Local demo</div></div>
+        <div><div className="project-name">Scaffold concept 01</div><div className="project-meta">Untitled project&nbsp; / &nbsp;Local demo</div></div>
         <div className="top-spacer" />
          <div className="saved"><Check size={13} /> Session prototype</div>
-         <button className="top-action" onClick={() => notify('Drag to orbit · scroll to zoom · click a bay to select · Shift-click selects its level')} data-testid="button-help"><CircleHelp size={16} /><span>Help</span></button>
+         <button className="top-action" onClick={() => notify('Choose Bay, Lift or Unit, then click the scaffold. Drag to orbit, scroll to zoom. Shift-click selects a lift.')} data-testid="button-help"><CircleHelp size={16} /><span>Help</span></button>
         <div className="avatar" title="Workspace user">HL</div>
       </header>
-       <section className={`main-stage ${leftOpen ? 'left-open' : ''} ${rightOpen ? 'right-open' : ''} ${bottomOpen ? 'bottom-open' : ''}`}>
+       <section className={`main-stage ${leftOpen ? 'left-open' : ''} ${selection && !preview ? 'has-context' : ''} ${bottomOpen ? 'bottom-open' : ''}`}>
         <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} resetToken={resetToken} viewMode={viewMode} />
         <div className="center-top">
            <div className="scene-chip"><span className="status-dot" /> <strong>3D view</strong></div>
           <div className="scene-chip"><Ruler size={12} /> Dimensions illustrative</div>
-           {showLabels && <div className="scene-chip"><strong>{selected}</strong></div>}
+           <div className="scene-chip selection-chip"><strong>{selected}</strong></div>
         </div>
+         {starter && <div className="selection-bar" aria-label="Selection mode">
+           <span>Select</span>{(['Bay', 'Lift', 'Unit'] as const).map(kind => <button key={kind} className={selectionMode === kind ? 'active' : ''} aria-pressed={selectionMode === kind} data-testid={`select-mode-${kind.toLowerCase()}`} onClick={() => { clearAction(); setPreview(null); setSelectionMode(kind); if (selection) setSelection({ ...selection, kind, level: Math.min(selection.level, selectedBay.cells.length) }); }}>{kind}</button>)}
+           <span className="selection-hint">Click scaffold · Shift-click lift</span>
+         </div>}
         <div className="canvas-controls">
           <button className={`view-button ${viewMode === 'orbit' ? 'active' : ''}`} title="Orbit view" onClick={() => { setViewMode('orbit'); setResetToken(v => v + 1); }} data-testid="button-orbit"><RotateCcw size={14} /></button>
-          <button className={`view-button ${viewMode === 'pan' ? 'active' : ''}`} title="Pan view" onClick={() => { setViewMode('pan'); notify('Pan mode: right-drag in the view'); }} data-testid="button-pan"><Move size={14} /></button>
+          <button className={`view-button ${viewMode === 'pan' ? 'active' : ''}`} title="Pan view" onClick={() => { setViewMode('pan'); notify('Pan mode: drag in the view'); }} data-testid="button-pan"><Move size={14} /></button>
           <button className="view-button" title="Reset view" onClick={() => setResetToken(v => v + 1)} data-testid="button-reset-view"><Eye size={14} /></button>
         </div>
 
@@ -400,7 +335,7 @@ function App() {
           <div className="panel-head"><div><div className="panel-heading">Component toolkit</div><div className="head-sub">Browse system components</div></div><button className="icon-button" onClick={() => setLeftOpen(false)} title="Collapse toolkit" data-testid="button-collapse-toolkit"><ChevronLeft size={16} /></button></div>
           <div className="panel-body">
              {!starter && <div className="panel-section"><div className="selected-desc">Build a concept around the three-storey building.</div><button className="primary-button full-button" onClick={generate} data-testid="button-generate"><Plus size={14} /> Generate starter scaffold</button></div>}
-             {preview && <div className="panel-section"><div className="section-title">Place {preview}</div><p className="selected-desc">Preview snapped to the selected bay and level. Click the model or confirm here. Esc cancels.</p><button className="primary-button full-button" onClick={place} data-testid="button-place-component">Place component</button><button className="secondary-button full-button" onClick={cancelPlacement} data-testid="button-cancel-placement">Cancel placement</button></div>}
+             {preview && <div className="panel-section"><div className="section-title">Place {preview}</div><p className="selected-desc">Snapped to Bay {selectedBay.number} · Lift {Math.min(activeLevel, selectedBay.cells.length)} · {elevations[selectedBay.side]}. Click the model or confirm here. Esc cancels.</p><button className="primary-button full-button" onClick={place} data-testid="button-place-component">Place component</button><button className="secondary-button full-button" onClick={cancelPlacement} data-testid="button-cancel-placement">Cancel placement</button></div>}
             <label className="searchbox"><Search size={14} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Find a component..." aria-label="Search components" data-testid="input-tool-search" />{query && <button className="icon-button" onClick={() => setQuery('')} title="Clear search"><X size={13} /></button>}</label>
             <div className="eyebrow">Categories</div>
             <div className="category-row">{categoryList.map(c => <button key={c} className={category === c ? 'active' : ''} onClick={() => setCategory(c)} data-testid={`filter-${c.toLowerCase()}`}>{c}</button>)}</div>
@@ -408,7 +343,7 @@ function App() {
             <div className="tool-grid" style={{ marginTop: 8 }}>
               {filteredTools.map(tool => <button className={`tool-item ${preview === tool.name ? 'selected' : ''}`} key={tool.name} onClick={() => chooseTool(tool.name)} data-testid={`tool-${tool.code}`}>
                 <tool.Icon size={15} className="tool-icon" /><span className="tool-name">{tool.name}</span><div className="tool-dims">{tool.code} · demo</div>
-                <span className={`tool-star ${favSet.includes(tool.name) ? 'is-fav' : ''}`} role="button" aria-label={`${favSet.includes(tool.name) ? 'Remove' : 'Add'} ${tool.name} favorite`} onClick={e => { e.stopPropagation(); toggleFavorite(tool.name); }} data-testid={`favorite-${tool.code}`}><Star size={12} fill={favSet.includes(tool.name) ? 'currentColor' : 'none'} /></span>
+                <span className={`tool-star ${favSet.includes(tool.name) ? 'is-fav' : ''}`} role="button" tabIndex={0} aria-label={`${favSet.includes(tool.name) ? 'Remove' : 'Add'} ${tool.name} favorite`} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleFavorite(tool.name); } }} onClick={e => { e.stopPropagation(); toggleFavorite(tool.name); }} data-testid={`favorite-${tool.code}`}><Star size={12} fill={favSet.includes(tool.name) ? 'currentColor' : 'none'} /></span>
               </button>)}
               {!filteredTools.length && <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#8c9aa5', padding: 22 }}>No components match “{query}”.</div>}
             </div>
@@ -419,43 +354,7 @@ function App() {
           </div>
         </aside>
         {!leftOpen && <button className="collapse-tab left" onClick={() => setLeftOpen(true)} title="Open toolkit" data-testid="button-open-toolkit"><ChevronRight size={15} /></button>}
-        <aside className={`panel right ${rightOpen ? '' : 'collapsed'}`}>
-          <div className="panel-head"><div><div className="panel-heading">Properties</div><div className="head-sub">Contextual scaffold settings</div></div><button className="icon-button" onClick={() => setRightOpen(false)} title="Collapse properties" data-testid="button-collapse-properties"><ChevronRight size={16} /></button></div>
-          <div className="panel-body">
-            <div className="panel-section">
-               <div className="section-title-row"><span className="eyebrow">Selected element</span><span className="type-badge">{selected === 'Building' ? 'BUILDING' : selected.includes('Bay') ? 'SCAFFOLD BAY' : 'SCAFFOLD LEVEL'}</span></div>
-              <div className="selected-title">{selected}</div>
-              <div className="selected-desc">Illustrative configuration · not engineering verified</div>
-              {selected !== 'Building' && <>
-                 <label className="field-label">Bay reference</label><select className="field-control" value={activeBay} onChange={e => setSelected(`Bay ${e.target.value} · Level ${String(activeLevel).padStart(2, '0')} · North`)} data-testid="select-bay">{Array.from({ length: bays }, (_, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>Bay {String(i + 1).padStart(2, '0')}</option>)}</select>
-                 <label className="field-label">Level</label><select className="field-control" value={String(activeLevel)} onChange={e => setSelected(`Level ${String(e.target.value).padStart(2, '0')}`)} data-testid="select-level">{Array.from({ length: lifts }, (_, i) => <option key={i} value={i + 1}>Level {String(i + 1).padStart(2, '0')}</option>)}</select>
-              </>}
-            </div>
-            <div className="panel-section">
-              <div className="section-title-row"><span className="section-title">Layout</span><SlidersHorizontal size={14} color="#8998a4" /></div>
-              <label className="field-label">Bay width <span style={{ color: '#9aa5ad' }}>· illustrative</span></label>
-              <select className="field-control" value={String(bayWidth)} onChange={e => setBayWidth(Number(e.target.value))} data-testid="select-bay-width"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select>
-              <label className="field-label">Lift height <span style={{ color: '#9aa5ad' }}>· illustrative</span></label>
-              <select className="field-control" value={String(liftHeight)} onChange={e => setLiftHeight(Number(e.target.value))} data-testid="select-lift-height"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select>
-            </div>
-            <div className="panel-section">
-               <div className="section-title-row"><span className="section-title">Common options</span><span className="type-badge">{selected.includes('Level') ? `LEVEL ${activeLevel}` : 'SYSTEM'}</span></div>
-               <div className="switch-row">Decking <button className={`switch ${activeDeck ? 'on' : ''}`} role="switch" aria-label="Decking" aria-checked={activeDeck} onClick={() => toggleLevelOption('deck')} data-testid="toggle-decking" /></div>
-               <div className="switch-row">Guardrails <button className={`switch ${activeGuardrails ? 'on' : ''}`} role="switch" aria-label="Guardrails" aria-checked={activeGuardrails} onClick={() => toggleLevelOption('guardrails')} data-testid="toggle-guardrails" /></div>
-               <div className="switch-row">Stair tower <button className={`switch ${stair ? 'on' : ''}`} role="switch" aria-label="Stair tower" aria-checked={stair} onClick={() => setStair(!stair)} data-testid="toggle-stair" /></div>
-            </div>
-            <div className="panel-section" style={{ borderBottom: 0 }}>
-              <button className="section-title-row" style={{ width: '100%', border: 0, background: 'none', padding: 0, cursor: 'pointer' }} onClick={() => setAdvancedOpen(!advancedOpen)} data-testid="button-advanced"><span className="section-title">Advanced settings</span>{advancedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</button>
-              {advancedOpen && <div style={{ paddingTop: 5 }}>
-                 <div className="switch-row">Show selection label <button className={`switch ${showLabels ? 'on' : ''}`} role="switch" aria-label="Show selection label" aria-checked={showLabels} onClick={() => setShowLabels(!showLabels)} data-testid="toggle-labels" /></div>
-                <label className="field-label">Scaffold finish</label><select className="field-control" value={finish} onChange={e => setFinish(e.target.value)} data-testid="select-finish"><option value="galv">Galvanised steel</option><option value="blue">HAKI blue (concept)</option></select>
-                <label className="field-label">Work area reference</label><input className="field-control" value={workArea} onChange={e => setWorkArea(e.target.value)} data-testid="input-work-area" />
-              </div>}
-            </div>
-            <div className="disclaimer">Concept workspace only. All dimensions, counts and component indicators are illustrative and are not verified engineering calculations.</div>
-          </div>
-        </aside>
-        {!rightOpen && <button className="collapse-tab right" onClick={() => setRightOpen(true)} title="Open properties" data-testid="button-open-properties"><ChevronLeft size={15} /></button>}
+        {selection && !preview && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} />}
 
         <div className={`bottom-panel ${bottomOpen ? '' : 'closed'}`}>
           <div className="bottom-head">
@@ -464,28 +363,43 @@ function App() {
           </div>
           <div className="bottom-content">
             {bottomTab === 'Levels' ? <>
-               <div className="levels-list">{levels.map(level => <button key={level} className={`level-card ${activeLevel === level && selected !== 'Building' ? 'active' : ''}`} onClick={() => { setSelected(`Level ${String(level).padStart(2, '0')}`); setStarter(true); }} data-testid={`level-card-${level}`}>
+               <div className="levels-list">{levels.map(level => {
+                 const cells = model.filter(bay => bay.cells.length >= level);
+                 const heights = cells.map(bay => cellElevation(bay, level));
+                 const summarize = (key: 'deck' | 'guardrails' | 'braces' | 'brackets') => {
+                   const count = cells.filter(bay => bay.cells[level - 1][key]).length;
+                   return count === 0 ? 'Off' : count === cells.length ? 'Included' : 'Mixed';
+                 };
+                 return <button key={level} className={`level-card ${activeLevel === level && selection?.kind === 'Lift' ? 'active' : ''}`} onClick={() => selectObject({ kind: 'Lift', bayId: selectedBay.cells.length >= level ? selectedBay.id : cells[0].id, level })} data-testid={`level-card-${level}`}>
                 <div className="level-number">LEVEL / 0{level}</div><div className="level-name">Lift {level} settings</div>
-                 <div className="level-setting"><span>Elevation</span><span>{(level * liftHeight).toFixed(1)} m</span></div><div className="level-setting"><span>Deck</span><span>{(levelOptions[level]?.deck ?? deck) ? 'Included' : 'Off'}</span></div><div className="level-setting"><span>Guardrail</span><span>{(levelOptions[level]?.guardrails ?? guardrails) ? 'Included' : 'Off'}</span></div>
-              </button>)}
-                <button className="level-card" onClick={addLift} style={{ minWidth: 110, display: 'grid', placeItems: 'center', color: '#6f8799' }} data-testid="button-add-level"><Plus size={17} /><span style={{ fontSize: 10, marginTop: 6 }}>Add lift</span></button>
+                 <div className="level-setting"><span>Elevation</span><span>{Math.min(...heights).toFixed(1)}{Math.min(...heights) !== Math.max(...heights) ? `–${Math.max(...heights).toFixed(1)}` : ''} m</span></div>
+                 <div className="level-setting"><span>Deck</span><span>{summarize('deck')}</span></div><div className="level-setting"><span>Guard frames</span><span>{summarize('guardrails')}</span></div>
+                 <div className="level-setting"><span>Braces / brackets</span><span>{summarize('braces')} / {summarize('brackets')}</span></div><div className="level-setting"><span>Bays at this lift</span><span>{cells.length}</span></div>
+              </button>; })}
+                {starter && <button className="level-card" disabled={lifts >= 5} onClick={() => {
+                  setPreview(null); setSelection({ kind: 'Lift', bayId: selectedBay.id, level: Math.min(activeLevel, selectedBay.cells.length) }); setSelectionMode('Lift');
+                  setAction('add-lift'); setDraftHeight(3); setOperation(previewLift(model, selectedBay.id, false, 3));
+                }} style={{ minWidth: 110, display: 'grid', placeItems: 'center', color: '#6f8799' }} data-testid="button-add-level"><Plus size={17} /><span style={{ fontSize: 10, marginTop: 6 }}>Preview top lift</span></button>}
+                {!starter && <div className="context-note">Generate a starter scaffold from the toolkit to compare its lifts.</div>}
               </div>
-              <div className="parts-summary"><div className="eyebrow">Quick adjust</div><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}><span style={{ color: '#71818f', fontSize: 10 }}>Bays</span><Stepper value={bays} decrement={removeBay} increment={addBay} testid="bays" /></div><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}><span style={{ color: '#71818f', fontSize: 10 }}>Lifts</span><Stepper value={lifts} decrement={removeLift} increment={addLift} testid="lifts" /></div><div className="summary-foot">Changes update the concept view immediately.</div></div>
-             </> : <div className="parts-summary" style={{ width: '100%', border: 0, display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 15, alignContent: 'start', padding: '15px 20px' }}>
+              <div className="parts-summary"><div className="eyebrow">Selection reference</div>{starter && <>
+                <label className="field-label" htmlFor="bay-reference">Bay for local lift actions</label><select id="bay-reference" className="field-control" data-testid="select-bay-reference" value={selectedBay.id} onChange={event => {
+                  const bay = model.find(item => item.id === event.target.value)!;
+                  selectObject({ kind: selection?.kind ?? 'Bay', bayId: bay.id, level: Math.min(activeLevel, bay.cells.length) });
+                }}>{model.map(bay => <option key={bay.id} value={bay.id}>Bay {bay.number} · {elevations[bay.side]}</option>)}</select>
+                <div className="switch-row">Stair tower<button className={`switch ${stair ? 'on' : ''}`} role="switch" aria-label="Stair tower" aria-checked={stair} onClick={() => setStair(value => !value)} data-testid="toggle-stair" /></div>
+              </>}<div className="summary-foot">Click a card to highlight its whole lift in 3D. Routine changes use the temporary action dock.</div></div>
+             </> : <div className="parts-summary bom-grid">
               {parts.map(([label, count]) => <div key={label as string} style={{ borderRight: '1px solid #e8edf0', paddingRight: 10 }}><div className="eyebrow">{label as string}</div><div style={{ font: '700 19px var(--app-font-display)', color: '#39566e', margin: '8px 0 4px' }}>{count as number}</div><div style={{ color: '#98a3ac', fontSize: 9 }}>indicative units</div></div>)}
               <div className="summary-foot" style={{ gridColumn: '1 / -1' }}>Illustrative parts summary for concept coordination. Quantities are not verified engineering calculations or a construction takeoff.</div>
             </div>}
           </div>
         </div>
-        <button className="bottom-toggle" onClick={() => setBottomOpen(!bottomOpen)} data-testid="button-toggle-bottom"><Layers3 size={13} /> {bottomOpen ? 'Hide levels & parts' : 'Levels & parts'} <span className="type-badge" style={{ padding: '3px 5px' }}>{starter ? `${bays} bays · ${lifts} lifts` : 'No scaffold'}</span></button>
+        <button className="bottom-toggle" onClick={() => setBottomOpen(!bottomOpen)} data-testid="button-toggle-bottom"><Layers3 size={13} /> {bottomOpen ? 'Hide levels & parts' : 'Levels & parts'} <span className="type-badge" style={{ padding: '3px 5px' }}>{starter ? `${model.length} bays · up to ${lifts} lifts` : 'No scaffold'}</span></button>
         {notice && <div className="toast-note" role="status" data-testid="status-notice">{notice}</div>}
       </section>
     </main>
   );
-}
-
-function Stepper({ value, decrement, increment, testid }: { value: number; decrement: () => void; increment: () => void; testid: string }) {
-  return <div className="stepper"><button onClick={decrement} aria-label={`Remove ${testid}`} data-testid={`button-decrease-${testid}`}><Minus size={12} /></button><span>{String(value).padStart(2, '0')}</span><button onClick={increment} aria-label={`Add ${testid}`} data-testid={`button-increase-${testid}`}><Plus size={12} /></button></div>;
 }
 
 function PreviewIcon({ name }: { name: string }) {

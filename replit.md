@@ -32,7 +32,9 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 The user explicitly requested a UX demonstration, not production scaffolding or engineering software. Keep the 3D model visible, dock routine tools and settings outside it, and clearly label all sample counts, dimensions and indicators as illustrative.
 
-The demo supports starter scaffold generation, bay and level selection, snapped component placement, scaffold configuration, and a level/parts comparison panel. State is session-only; no construction validation or verified calculations are provided.
+The demo supports starter scaffold generation, bay/lift/unit selection, snapped component placement, scaffold configuration, and a level/parts comparison panel. State is session-only; no construction validation or verified calculations are provided.
+
+Do not restore an always-visible Properties inspector or put routine settings in a centered dialog. Show compact, temporary contextual actions for the selection in a dock outside the model. Detailed choices open only after an action is chosen and close after applying or cancelling. Bay and lift additions require a snapped scene preview before confirmation. Preserve the interactive rendering fallback when WebGL is unavailable.
 
 ## User preferences
 

@@ -1,0 +1,40 @@
+Please update the existing HAKI Lasco UX prototype in this project. Keep the current 3D building scene, component toolkit, and working interactions where possible. Do not rebuild the app from scratch.
+
+## Change the interaction concept
+
+The current always-visible Properties panel shows too many settings at once. Remove it as a persistent inspector. Instead, when the user selects a scaffold **bay, lift, or unit**, show a compact contextual menu with only the actions relevant to that selection. Keep the 3D model as the main focus.
+
+Do not open routine settings dialogs in the middle of the model. Place contextual controls near the selected object or in a temporary docked action area. Keep the controls compact and position them so they do not cover the object being edited. Show detailed choices only after the user chooses an action, then close those choices after applying or cancelling.
+
+## Contextual actions
+
+**Bay**
+- Change bay length or decking
+- Remove the bay
+- Add a bay in an available direction
+
+**Lift**
+- Add or remove a lift
+- Add or remove a lift on the selected bay
+- Change lift height or decking
+- Toggle guard frames, braces, and brackets
+
+**Unit**
+- Change decking
+- Toggle guard frames, braces, and brackets
+
+When adding a bay or lift, show a snapped preview in the 3D scene before applying it. Selecting an operation should visibly update the scaffold. Use illustrative values and geometry; do not present results as verified engineering calculations.
+
+## Keep and refine
+
+- Keep the searchable component toolkit on the left for browsing and adding components.
+- Keep the 3D canvas visible and interactive.
+- Keep the bottom “Levels & parts” area as a collapsible, full-width panel for comparing level settings and viewing the bill of materials. Selecting a level there should highlight it in 3D.
+- Make the canvas resize when the bottom panel opens; do not cover it with a dialog.
+- Make the contextual actions easy to scan, with short labels and clear grouping.
+
+## Demonstration flow
+
+The user generates a starter scaffold around the sample building, selects a bay and adds a neighboring bay using the preview, then selects a lift and changes one of its options. The available menu should change with each selection, showing only relevant actions.
+
+Keep the prototype desktop-focused and runnable. Preserve the current rendering approach or fallback if WebGL is unavailable in the preview. After updating, run the app and resolve any startup or interaction errors.
