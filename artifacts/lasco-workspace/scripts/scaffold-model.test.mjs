@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { availableDirections, bayLayout, editCells, partsSummary, previewBay, previewLift, removeLift, starterModel } from '../src/scaffold-model.ts';
+import { availableDirections, bayLayout, editCells, partsSummary, previewBay, previewEdit, previewLift, removeLift, selectionAfterRemoval, selectionLabel, starterModel } from '../src/scaffold-model.ts';
+import { contextPosition, overlaps } from '../src/context-position.ts';
 
 test('neighbor previews do not mutate the committed scaffold and reject occupied directions', () => {
   const model = starterModel();
@@ -66,4 +67,48 @@ test('illustrative BOM updates when option geometry changes', () => {
   assert.equal(parts['Guard frames'], 48);
   assert.equal(parts['Diagonal braces'], 48);
   assert.equal(parts.Brackets, 24);
+});
+
+test('direction must be explicitly chosen before an add-bay preview exists', () => {
+  const model = starterModel(), selection = { kind: 'Bay', bayId: '0-3', level: 2 };
+  assert.equal(previewEdit(model, selection, 'add-bay', 2.5, 3, '', true, {}), null);
+  assert.equal(previewEdit(model, selection, 'add-bay', 2.5, 3, 'left', true, {}), null);
+  assert.equal(previewEdit(model, selection, 'add-bay', 2.5, 3, 'right', true, {}).model.length, 13);
+});
+
+test('live option and removal previews never modify the original snapshot', () => {
+  const model = starterModel(), original = JSON.stringify(model), selection = { kind: 'Lift', bayId: '0-3', level: 2 };
+  const change = previewEdit(model, selection, 'height', 2.5, 2, '', true, {});
+  assert.equal(change.changedCells.length, 12);
+  assert.equal(change.model[0].cells[1].height, 2);
+  const removal = previewEdit(model, selection, 'remove-local-lift', 2.5, 3, '', true, {});
+  assert.deepEqual(removal.removedCells, [{ bayId: '0-3', level: 2 }]);
+  assert.equal(removal.model[2].cells.length, 2);
+  assert.equal(JSON.stringify(model), original);
+});
+
+test('lift identity names the bay reference independently of whole-lift edit scope', () => {
+  assert.equal(selectionLabel({ kind: 'Lift', bayId: '0-3', level: 2 }, starterModel()), 'Lift 2 · Bay 03 · North');
+});
+
+test('context placement stays beside selection without overlapping the model', () => {
+  const model = { left: 400, top: 160, right: 860, bottom: 700 };
+  const bounds = { anchor: { left: 720, top: 320, right: 830, bottom: 460 }, selected: model, model };
+  const area = { left: 312, top: 104, right: 1424, bottom: 830 };
+  const placed = contextPosition(bounds, area, 264, 280);
+  assert.equal(placed.placement, 'near-selection');
+  assert.equal(placed.left, 876);
+  assert.equal(overlaps({ ...placed, right: placed.left + 264, bottom: placed.top + 280 }, model), false);
+  assert.equal(contextPosition(null, area, 264, 280).placement, 'clear-area');
+});
+
+test('removal selects a valid remaining neighbor without mutating the undo snapshot', () => {
+  const model = starterModel(), original = JSON.stringify(model);
+  const bay = { kind: 'Bay', bayId: '0-3', level: 2 };
+  const next = model.filter(item => item.id !== bay.bayId);
+  assert.deepEqual(selectionAfterRemoval(model, next, bay), { kind: 'Bay', bayId: '0-2', level: 2 });
+  const lift = { kind: 'Lift', bayId: '0-3', level: 3 };
+  const withoutLift = removeLift(model, lift, true);
+  assert.deepEqual(selectionAfterRemoval(model, withoutLift, lift), { kind: 'Lift', bayId: '0-3', level: 2 });
+  assert.equal(JSON.stringify(model), original);
 });

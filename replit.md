@@ -34,7 +34,7 @@ The user explicitly requested a UX demonstration, not production scaffolding or 
 
 The demo supports starter scaffold generation, bay/lift/unit selection, snapped component placement, scaffold configuration, and a level/parts comparison panel. State is session-only; no construction validation or verified calculations are provided.
 
-Do not restore an always-visible Properties inspector or put routine settings in a centered dialog. Show compact, temporary contextual actions for the selection in a dock outside the model. Detailed choices open only after an action is chosen and close after applying or cancelling. Bay and lift additions require a snapped scene preview before confirmation. Preserve the interactive rendering fallback when WebGL is unavailable.
+Keep the current visual style and working features when refining contextual editing. Do not restore an always-visible Properties inspector or put routine settings in a centered dialog. Place compact, temporary controls near the selection when there is room, otherwise in a nearby clear area; never cover the selected object. Label each action's scope explicitly. Detailed choices open only after an action is chosen and close after applying or cancelling. Scaffold-changing actions preview their result before Apply, Add bay offers only available directions, and completed edits can be undone. Preserve the interactive rendering fallback when WebGL is unavailable.
 
 ## User preferences
 

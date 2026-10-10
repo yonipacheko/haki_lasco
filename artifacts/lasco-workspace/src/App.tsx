@@ -4,9 +4,11 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { SVGRenderer } from 'three/examples/jsm/renderers/SVGRenderer.js';
 import { ContextualActions, type ContextualActionGroup } from './contextual-actions';
 import { scaffoldScene, componentScene } from './scaffold-scene';
-import { availableDirections, cellElevation, editCells, elevations, partsSummary, previewBay, previewLift, removeLift as removeModelLift, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
+import { availableDirections, cellElevation, editCells, elevations, partsSummary, previewEdit, removeLift as removeModelLift, selectionAfterRemoval, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
+import { combineBounds, projectSelection } from './selection-projection';
+import type { SelectionScreenBounds } from './context-position';
 import {
-  Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Search, Shield, Star, X,
+  Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Search, Shield, Star, Undo2, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -28,7 +30,7 @@ const tools: ToolItem[] = [
 ];
 const categoryList: Category[] = ['All', 'Structure', 'Decking', 'Access', 'Protection'];
 
-function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMode }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; resetToken: number; viewMode: 'orbit' | 'pan' }) {
+function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, resetToken, viewMode }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; onScreenBounds: (value: SelectionScreenBounds | null) => void; resetToken: number; viewMode: 'orbit' | 'pan' }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -39,6 +41,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
   const onPlaceRef = useRef(onPlace); onPlaceRef.current = onPlace;
   const onCancelRef = useRef(onCancel); onCancelRef.current = onCancel;
   const configRef = useRef(config); configRef.current = config;
+  const onScreenRef = useRef(onScreenBounds); onScreenRef.current = onScreenBounds;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -112,7 +115,17 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
     host.addEventListener('pointerdown', pointerDown);
     host.addEventListener('pointerup', click);
     let frame = 0;
-    const animate = () => { frame = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); };
+    let lastProjection = 0, lastBounds = '';
+    const animate = (time = 0) => {
+      frame = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera);
+      if (time - lastProjection > 150) {
+        lastProjection = time;
+        const current = configRef.current;
+        const bounds = current.selection ? combineBounds(projectSelection(current.model, current.selection, camera, host), current.operation ? projectSelection(current.operation.model, current.selection, camera, host) : null) : null;
+        const key = JSON.stringify(bounds, (_, value) => typeof value === 'number' ? Math.round(value / 2) * 2 : value);
+        if (key !== lastBounds) { lastBounds = key; onScreenRef.current(bounds); }
+      }
+    };
     animate();
     const resize = () => {
       if (!host.isConnected) return;
@@ -155,7 +168,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, resetToken, viewMo
     group.add(building);
     if (starter) {
       group.add(scaffoldScene(model, surface, selection, operation, stair));
-      group.add(componentScene(model, placed, preview, selection, surface));
+      group.add(componentScene(operation?.model ?? model, placed, preview, selection, surface, operation));
     }
   }, [config]);
 
@@ -175,7 +188,8 @@ function App() {
   const [model, setModel] = useState<ScaffoldModel>(starterModel);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectionMode, setSelectionMode] = useState<SelectionKind>('Bay');
-  const [operation, setOperation] = useState<AdditionPreview | null>(null);
+  const [screenBounds, setScreenBounds] = useState<SelectionScreenBounds | null>(null);
+  const [history, setHistory] = useState<{ label: string; model: ScaffoldModel; placed: ComponentPlacement[]; stair: boolean; starter: boolean; selection: Selection | null }[]>([]);
   const [action, setAction] = useState<string | null>(null);
   const [draftWidth, setDraftWidth] = useState(2.5);
   const [draftHeight, setDraftHeight] = useState(3);
@@ -201,6 +215,23 @@ function App() {
     if (toastRef.current) window.clearTimeout(toastRef.current);
     toastRef.current = window.setTimeout(() => setNotice(''), 2400);
   }, []);
+  const remember = useCallback((label: string) => setHistory(items => [...items, { label, model, placed, stair, starter, selection }].slice(-30)), [model, placed, stair, starter, selection]);
+  const undo = useCallback(() => {
+    const previous = history.at(-1);
+    if (!previous) return;
+    setModel(previous.model); setPlaced(previous.placed); setStair(previous.stair); setStarter(previous.starter);
+    setSelection(previous.selection); if (previous.selection) setSelectionMode(previous.selection.kind);
+    setHistory(items => items.slice(0, -1)); setAction(null); setPreview(null); setScreenBounds(null);
+    notify(`Undone: ${previous.label}`);
+  }, [history, notify]);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey && !target.matches('input,select,textarea,[contenteditable="true"]')) { event.preventDefault(); undo(); }
+    };
+    window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
+  }, [undo]);
+  const operation = useMemo(() => selection && action ? previewEdit(model, selection, action, draftWidth, draftHeight, draftDirection, draftDeck, draftOptions) : null, [model, selection, action, draftWidth, draftHeight, draftDirection, draftDeck, draftOptions]);
   const config = useMemo<SceneConfig>(() => ({ starter, model, selection, selectionMode, operation, preview, placed, stair }), [starter, model, selection, selectionMode, operation, preview, placed, stair]);
   const filteredTools = useMemo(() => tools.filter(t => (category === 'All' || t.category === category) && t.name.toLowerCase().includes(query.toLowerCase())), [category, query]);
   const parts = useMemo(() => partsSummary(starter ? model : [], placed, starter && stair), [starter, model, placed, stair]);
@@ -209,11 +240,12 @@ function App() {
   const levels = starter ? Array.from({ length: lifts }, (_, i) => i + 1) : [];
   const activeLevel = selection?.level ?? 1;
   const selected = selection ? selectionLabel(selection, model) : 'Building';
-  const clearAction = () => { setAction(null); setOperation(null); };
-  const selectObject = (value: Selection | null) => { clearAction(); setPreview(null); setSelection(value); if (value) setSelectionMode(value.kind); };
-  const cancelPlacement = useCallback(() => { setPreview(null); setOperation(null); setAction(null); notify('Preview cancelled'); }, [notify]);
+  const clearAction = () => { setAction(null); };
+  const selectObject = (value: Selection | null) => { clearAction(); setScreenBounds(null); setPreview(null); setSelection(value); if (value) setSelectionMode(value.kind); };
+  const cancelPlacement = useCallback(() => { setPreview(null); setAction(null); notify('Preview cancelled'); }, [notify]);
   const place = useCallback(() => {
     if (!preview) return;
+    remember(`Place ${preview}`);
     setStarter(true);
     const target: Selection = { kind: 'Unit', bayId: selectedBay.id, level: Math.min(activeLevel, selectedBay.cells.length) };
     if (preview === 'Steel deck' || preview === 'Guardrail') setModel(value => editCells(value, target, preview === 'Steel deck' ? { deck: true } : { guardrails: true }));
@@ -222,7 +254,7 @@ function App() {
     setRecent(prev => [preview, ...prev.filter(item => item !== preview)].slice(0, 3));
     notify(`${preview} placed at lift ${target.level}`);
     setPreview(null);
-  }, [preview, notify, selectedBay, activeLevel]);
+  }, [preview, notify, selectedBay, activeLevel, remember]);
   const chooseTool = (name: string) => {
     clearAction();
     setStarter(true);
@@ -230,29 +262,26 @@ function App() {
     setRecent(prev => [name, ...prev.filter(item => item !== name)].slice(0, 3));
   };
   const toggleFavorite = (name: string) => setFavSet(prev => prev.includes(name) ? prev.filter(v => v !== name) : [...prev, name]);
-  const generate = () => { setStarter(true); setPreview(null); selectObject({ kind: 'Bay', bayId: '0-3', level: 2 }); notify('Starter scaffold added around the building'); };
+  const generate = () => { remember('Generate starter scaffold'); setStarter(true); setPreview(null); selectObject({ kind: 'Bay', bayId: '0-3', level: 2 }); notify('Starter scaffold added around the building'); };
   const directions = selection ? availableDirections(model, selection.bayId) : [];
   const actionGroups: ContextualActionGroup[] = !selection ? [] : selection.kind === 'Bay' ? [
-    { label: 'Configure', actions: [{ id: 'length', label: 'Bay length' }, { id: 'decking', label: 'Decking' }] },
+    { label: 'Configure', actions: [{ id: 'length', label: 'Change length', scope: 'selected bay' }, { id: 'decking', label: 'Change decking', scope: 'selected bay' }] },
     { label: 'Extend & remove', actions: [
-      { id: 'add-bay', label: 'Add neighboring bay', disabled: !directions.length, reason: !directions.length ? 'Select an end bay with free space (six-bay limit).' : undefined },
-      { id: 'remove-bay', label: 'Remove bay', danger: true, disabled: model.filter(bay => bay.side === selectedBay.side).length <= 1, reason: 'Keep at least one bay per elevation.' },
+      { id: 'add-bay', label: 'Add bay', scope: 'beside selected bay', disabled: !directions.length, reason: !directions.length ? 'Select an end bay with free space (six-bay limit).' : undefined },
+      { id: 'remove-bay', label: 'Remove bay', scope: 'selected bay', danger: true, disabled: model.filter(bay => bay.side === selectedBay.side).length <= 1, reason: 'Keep at least one bay per elevation.' },
     ] },
   ] : selection.kind === 'Lift' ? [
-    { label: 'Configure this lift', actions: [{ id: 'height', label: 'Lift height' }, { id: 'decking', label: 'Decking' }, { id: 'options', label: 'Guards, braces & brackets' }] },
+    { label: 'Configure this lift', actions: [{ id: 'height', label: 'Change height', scope: 'whole lift' }, { id: 'decking', label: 'Change decking', scope: 'whole lift' }, { id: 'options', label: 'Guards, braces & brackets', scope: 'whole lift' }] },
     { label: 'All bays', actions: [
-      { id: 'add-lift', label: 'Add top lift', disabled: lifts >= 5, reason: 'Prototype limit: five lifts per bay.' },
-      { id: 'remove-lift', label: 'Remove this lift', danger: true, disabled: !removeModelLift(model, selection, false), reason: 'Keep at least one lift per bay.' },
+      { id: 'add-lift', label: 'Add top lift', scope: 'all bays', disabled: lifts >= 5, reason: 'Prototype limit: five lifts per bay.' },
+      { id: 'remove-lift', label: 'Remove this lift', scope: 'whole lift', danger: true, disabled: !removeModelLift(model, selection, false), reason: 'Keep at least one lift per bay.' },
     ] },
     { label: `Bay ${String(selectedBay.number).padStart(2, '0')} · ${elevations[selectedBay.side]}`, actions: [
-      { id: 'add-local-lift', label: 'Add lift on this bay', disabled: selectedBay.cells.length >= 5, reason: 'Prototype limit: five lifts per bay.' },
-      { id: 'remove-local-lift', label: 'Remove lift on this bay', danger: true, disabled: !removeModelLift(model, selection, true), reason: 'This bay must contain the selected lift and retain one lift.' },
+      { id: 'add-local-lift', label: 'Add top lift', scope: 'selected bay', disabled: selectedBay.cells.length >= 5, reason: 'Prototype limit: five lifts per bay.' },
+      { id: 'remove-local-lift', label: 'Remove lift', scope: 'selected bay', danger: true, disabled: !removeModelLift(model, selection, true), reason: 'This bay must contain the selected lift and retain one lift.' },
     ] },
-  ] : [{ label: 'Configure this unit', actions: [{ id: 'decking', label: 'Decking' }, { id: 'options', label: 'Guards, braces & brackets' }] }];
+  ] : [{ label: 'Configure this unit', actions: [{ id: 'decking', label: 'Change decking', scope: 'selected unit' }, { id: 'options', label: 'Guards, braces & brackets', scope: 'selected unit' }] }];
   const actionTitle = actionGroups.flatMap(group => group.actions).find(item => item.id === action)?.label;
-  const buildAddition = (id: string, width = draftWidth, height = draftHeight, direction = draftDirection) => !selection ? null
-    : id === 'add-bay' ? previewBay(model, selection.bayId, direction, width)
-    : previewLift(model, selection.bayId, id === 'add-local-lift', height);
   const beginAction = (id: string) => {
     if (!selection) return;
     setPreview(null);
@@ -261,45 +290,42 @@ function App() {
     setDraftWidth(selectedBay.width); setDraftHeight(cell.height);
     setDraftDeck(cell.deck);
     setDraftOptions({ guardrails: cell.guardrails, braces: cell.braces, brackets: cell.brackets });
-    const direction = directions[0] ?? 'right'; setDraftDirection(direction);
-    setOperation(id.startsWith('add-') ? buildAddition(id, selectedBay.width, cell.height, direction) : null);
+    setDraftDirection('');
   };
   const applyAction = () => {
-    if (!selection || !action) return;
+    if (!selection || !action || !operation) return;
+    if (JSON.stringify(operation.model) === JSON.stringify(model)) { clearAction(); notify('No scaffold changes to apply'); return; }
+    remember(actionTitle ?? action);
+    setModel(operation.model);
     if (action.startsWith('add-')) {
-      if (!operation) return;
-      setModel(operation.model);
       if (operation.addedBayId) setSelection({ kind: 'Bay', bayId: operation.addedBayId, level: selection.level });
       else if (operation.addedCells[0]) setSelection({ kind: 'Lift', ...(operation.addedCells.find(cell => cell.bayId === selection.bayId) ?? operation.addedCells[0]) });
     } else if (action === 'remove-bay') {
-      const next = model.filter(bay => bay.id !== selection.bayId);
-      setModel(next); setPlaced(items => items.filter(item => item.bayId !== selection.bayId));
-      setSelection(null);
+      setPlaced(items => items.filter(item => item.bayId !== selection.bayId));
+      setSelection(selectionAfterRemoval(model, operation.model, selection));
     } else if (action === 'remove-lift' || action === 'remove-local-lift') {
       const onlyBay = action === 'remove-local-lift';
       const next = removeModelLift(model, selection, onlyBay);
       if (!next) return;
       const changed = new Set(model.filter(bay => (!onlyBay || bay.id === selection.bayId) && bay.cells.length >= selection.level).map(bay => bay.id));
-      setModel(next);
       setPlaced(items => items.filter(item => !changed.has(item.bayId) || item.level !== selection.level).map(item => changed.has(item.bayId) && item.level > selection.level ? { ...item, level: item.level - 1 } : item));
-      setSelection(null);
-    } else if (action === 'length') setModel(value => value.map(bay => bay.id === selection.bayId ? { ...bay, width: draftWidth } : bay));
-    else setModel(value => editCells(value, selection, action === 'height' ? { height: draftHeight } : action === 'decking' ? { deck: draftDeck } : draftOptions));
+      setSelection(selectionAfterRemoval(model, operation.model, selection));
+    }
     notify(`${actionTitle} applied · illustrative geometry`);
     clearAction();
   };
   const detail = action && selection ? (
     <form onSubmit={event => { event.preventDefault(); applyAction(); }}>
-      <p className="context-note">{selection.kind === 'Bay' ? 'Only the selected bay.' : selection.kind === 'Unit' ? 'Only this bay and lift unit.' : action.includes('local') ? `Only Bay ${selectedBay.number} · ${elevations[selectedBay.side]}.` : 'Applies across all bays with this lift.'}</p>
-      {action === 'add-bay' && <label className="context-field">Available direction<select value={draftDirection} onChange={event => { setDraftDirection(event.target.value); setOperation(buildAddition(action, draftWidth, draftHeight, event.target.value)); }} data-testid="select-direction">{directions.map(direction => <option key={direction} value={direction}>{direction === 'left' ? 'Left end' : 'Right end'}</option>)}</select></label>}
-      {(action === 'length' || action === 'add-bay') && <label className="context-field">Bay length · illustrative<select value={draftWidth} onChange={event => { const width = Number(event.target.value); setDraftWidth(width); if (action.startsWith('add-')) setOperation(buildAddition(action, width)); }} data-testid="select-bay-width"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
-      {(action === 'height' || action === 'add-lift' || action === 'add-local-lift') && <label className="context-field">Lift height · illustrative<select value={draftHeight} onChange={event => { const height = Number(event.target.value); setDraftHeight(height); if (action.startsWith('add-')) setOperation(buildAddition(action, draftWidth, height)); }} data-testid="select-lift-height"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
+      <p className="context-note">{selection.kind === 'Bay' ? 'Scope: selected bay only.' : selection.kind === 'Unit' ? 'Scope: this bay/lift unit only.' : action.includes('local') ? `Scope: Bay ${String(selectedBay.number).padStart(2, '0')} · ${elevations[selectedBay.side]} only.` : action === 'add-lift' ? 'Scope: a new top lift on every bay.' : `Scope: whole Lift ${selection.level} across all elevations.`}</p>
+      {action === 'add-bay' && <><div className="field-label">Choose an available direction</div><div className="context-directions" data-testid="available-directions">{directions.map(direction => <button type="button" key={direction} className={`secondary-button ${draftDirection === direction ? 'active' : ''}`} aria-pressed={draftDirection === direction} onClick={() => setDraftDirection(direction)} data-testid={`direction-${direction}`}>{direction === 'left' ? '← Left end' : 'Right end →'}</button>)}</div></>}
+      {(action === 'length' || (action === 'add-bay' && draftDirection)) && <label className="context-field">Bay length · illustrative<select value={draftWidth} onChange={event => setDraftWidth(Number(event.target.value))} data-testid="select-bay-width"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
+      {(action === 'height' || action === 'add-lift' || action === 'add-local-lift') && <label className="context-field">Lift height · illustrative<select value={draftHeight} onChange={event => setDraftHeight(Number(event.target.value))} data-testid="select-lift-height"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
       {action === 'decking' && <label className="context-field">Decking<select value={String(draftDeck)} onChange={event => setDraftDeck(event.target.value === 'true')} data-testid="select-decking"><option value="true">Included</option><option value="false">None</option></select></label>}
       {action === 'options' && (['guardrails', 'braces', 'brackets'] as const).map(key => <label className="context-check" key={key}><input type="checkbox" checked={draftOptions[key]} onChange={event => setDraftOptions(value => ({ ...value, [key]: event.target.checked }))} data-testid={`toggle-${key}`} />{key === 'guardrails' ? 'Guard frames' : key === 'braces' ? 'Braces' : 'Brackets'}</label>)}
-      {action?.startsWith('remove-') && <p className="context-note">Remove the selected {action === 'remove-bay' ? 'bay and its placed components' : 'lift and its placed components'} from this session? This cannot be undone.</p>}
-      {operation && <p className="context-note preview-note" data-testid="preview-status"><strong>Snapped preview</strong><br />{operation.label}<br />Blue geometry is not added until you confirm.</p>}
-      {action.startsWith('add-') && !operation && <p className="context-note">No available space. Select an end bay or stay below the five-lift limit.</p>}
-      <div className="context-footer"><button type="button" className="secondary-button" onClick={clearAction} data-testid="cancel-action">Cancel</button><button type="submit" className="primary-button" disabled={action.startsWith('add-') && !operation} data-testid="apply-action">{operation ? 'Confirm addition' : action.startsWith('remove-') ? 'Remove' : 'Apply'}</button></div>
+      {action.startsWith('remove-') && <p className="context-note">Previewing removal of this {action === 'remove-bay' ? 'bay and its placed components' : 'lift and its placed components'}. Undo will restore them after applying.</p>}
+      {operation && <p className="context-note preview-note" data-testid="preview-status"><strong>{action.startsWith('add-') ? 'Snapped preview' : 'Live preview'}</strong><br />{operation.label}<br />Apply commits the result. Cancel keeps the original scaffold.</p>}
+      {action === 'add-bay' && !operation && <p className="context-note">Choose a direction to show a snapped preview. Only free directions are listed.</p>}
+      <div className="context-footer"><button type="button" className="secondary-button" onClick={clearAction} data-testid="cancel-action">Cancel</button><button type="submit" className="primary-button" disabled={!operation} data-testid="apply-action">Apply</button></div>
     </form>
   ) : null;
 
@@ -311,11 +337,12 @@ function App() {
         <div><div className="project-name">Scaffold concept 01</div><div className="project-meta">Untitled project&nbsp; / &nbsp;Local demo</div></div>
         <div className="top-spacer" />
          <div className="saved"><Check size={13} /> Session prototype</div>
+         <button className="top-action" disabled={!history.length} onClick={undo} title={history.length ? `Undo ${history.at(-1)?.label} (Ctrl/Cmd+Z)` : 'No completed changes to undo'} data-testid="button-undo"><Undo2 size={16} /><span>Undo</span></button>
          <button className="top-action" onClick={() => notify('Choose Bay, Lift or Unit, then click the scaffold. Drag to orbit, scroll to zoom. Shift-click selects a lift.')} data-testid="button-help"><CircleHelp size={16} /><span>Help</span></button>
         <div className="avatar" title="Workspace user">HL</div>
       </header>
        <section className={`main-stage ${leftOpen ? 'left-open' : ''} ${selection && !preview ? 'has-context' : ''} ${bottomOpen ? 'bottom-open' : ''}`}>
-        <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} resetToken={resetToken} viewMode={viewMode} />
+        <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} onScreenBounds={setScreenBounds} resetToken={resetToken} viewMode={viewMode} />
         <div className="center-top">
            <div className="scene-chip"><span className="status-dot" /> <strong>3D view</strong></div>
           <div className="scene-chip"><Ruler size={12} /> Dimensions illustrative</div>
@@ -354,7 +381,7 @@ function App() {
           </div>
         </aside>
         {!leftOpen && <button className="collapse-tab left" onClick={() => setLeftOpen(true)} title="Open toolkit" data-testid="button-open-toolkit"><ChevronRight size={15} /></button>}
-        {selection && !preview && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} />}
+        {selection && !preview && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} screenBounds={screenBounds} />}
 
         <div className={`bottom-panel ${bottomOpen ? '' : 'closed'}`}>
           <div className="bottom-head">
@@ -378,7 +405,7 @@ function App() {
               </button>; })}
                 {starter && <button className="level-card" disabled={lifts >= 5} onClick={() => {
                   setPreview(null); setSelection({ kind: 'Lift', bayId: selectedBay.id, level: Math.min(activeLevel, selectedBay.cells.length) }); setSelectionMode('Lift');
-                  setAction('add-lift'); setDraftHeight(3); setOperation(previewLift(model, selectedBay.id, false, 3));
+                  setAction('add-lift'); setDraftHeight(3);
                 }} style={{ minWidth: 110, display: 'grid', placeItems: 'center', color: '#6f8799' }} data-testid="button-add-level"><Plus size={17} /><span style={{ fontSize: 10, marginTop: 6 }}>Preview top lift</span></button>}
                 {!starter && <div className="context-note">Generate a starter scaffold from the toolkit to compare its lifts.</div>}
               </div>
@@ -387,7 +414,7 @@ function App() {
                   const bay = model.find(item => item.id === event.target.value)!;
                   selectObject({ kind: selection?.kind ?? 'Bay', bayId: bay.id, level: Math.min(activeLevel, bay.cells.length) });
                 }}>{model.map(bay => <option key={bay.id} value={bay.id}>Bay {bay.number} · {elevations[bay.side]}</option>)}</select>
-                <div className="switch-row">Stair tower<button className={`switch ${stair ? 'on' : ''}`} role="switch" aria-label="Stair tower" aria-checked={stair} onClick={() => setStair(value => !value)} data-testid="toggle-stair" /></div>
+                <div className="switch-row">Stair tower<button className={`switch ${stair ? 'on' : ''}`} role="switch" aria-label="Stair tower" aria-checked={stair} onClick={() => { remember('Toggle stair tower'); clearAction(); setStair(value => !value); }} data-testid="toggle-stair" /></div>
               </>}<div className="summary-foot">Click a card to highlight its whole lift in 3D. Routine changes use the temporary action dock.</div></div>
              </> : <div className="parts-summary bom-grid">
               {parts.map(([label, count]) => <div key={label as string} style={{ borderRight: '1px solid #e8edf0', paddingRight: 10 }}><div className="eyebrow">{label as string}</div><div style={{ font: '700 19px var(--app-font-display)', color: '#39566e', margin: '8px 0 4px' }}>{count as number}</div><div style={{ color: '#98a3ac', fontSize: 9 }}>indicative units</div></div>)}

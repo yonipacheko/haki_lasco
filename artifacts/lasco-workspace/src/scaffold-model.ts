@@ -4,7 +4,7 @@ export type Selection = { kind: SelectionKind; bayId: string; level: number };
 export type CellOptions = { height: number; deck: boolean; guardrails: boolean; braces: boolean; brackets: boolean };
 export type ScaffoldBay = { id: string; side: number; number: number; width: number; cells: CellOptions[] };
 export type ScaffoldModel = ScaffoldBay[];
-export type AdditionPreview = { model: ScaffoldModel; label: string; addedBayId?: string; addedCells: { bayId: string; level: number }[] };
+export type AdditionPreview = { model: ScaffoldModel; label: string; addedBayId?: string; addedCells: { bayId: string; level: number }[]; changedBayIds?: string[]; changedCells?: { bayId: string; level: number }[]; removedCells?: { bayId: string; level: number }[]; removedBayIds?: string[] };
 export type ComponentPlacement = { id: number; name: string; bayId: string; level: number };
 export const defaultCell = (height = 3): CellOptions => ({ height, deck: true, guardrails: true, braces: true, brackets: false });
 
@@ -20,8 +20,8 @@ export function selectionLabel(selection: Selection, model: ScaffoldModel) {
   if (!bay) return 'Scaffold';
   const bayLabel = `Bay ${String(bay.number).padStart(2, '0')} · ${elevations[bay.side]}`;
   if (selection.kind === 'Bay') return bayLabel;
-  if (selection.kind === 'Lift') return `Lift ${String(selection.level).padStart(2, '0')} · all elevations`;
-  return `Unit · Bay ${String(bay.number).padStart(2, '0')} · Lift ${selection.level} · ${elevations[bay.side]}`;
+  if (selection.kind === 'Lift') return `Lift ${selection.level} · Bay ${String(bay.number).padStart(2, '0')} · ${elevations[bay.side]}`;
+  return `Unit · Lift ${selection.level} · Bay ${String(bay.number).padStart(2, '0')} · ${elevations[bay.side]}`;
 }
 
 export function bayLayout(model: ScaffoldModel) {
@@ -91,6 +91,39 @@ export function removeLift(model: ScaffoldModel, selection: Selection, onlyBay: 
   const targets = model.filter(bay => (!onlyBay || bay.id === selection.bayId) && bay.cells.length >= selection.level);
   if (!targets.length || targets.some(bay => bay.cells.length <= 1)) return null;
   return model.map(bay => targets.some(target => target.id === bay.id) ? { ...bay, cells: bay.cells.filter((_, i) => i + 1 !== selection.level) } : bay);
+}
+
+export function previewEdit(model: ScaffoldModel, selection: Selection, action: string, width: number, height: number, direction: string, deck: boolean, options: Pick<CellOptions, 'guardrails' | 'braces' | 'brackets'>): AdditionPreview | null {
+  if (action === 'add-bay') return previewBay(model, selection.bayId, direction, width);
+  if (action === 'add-lift' || action === 'add-local-lift') return previewLift(model, selection.bayId, action === 'add-local-lift', height);
+  let next: ScaffoldModel | null;
+  if (action === 'remove-bay') next = model.filter(bay => bay.id !== selection.bayId);
+  else if (action === 'remove-lift' || action === 'remove-local-lift') next = removeLift(model, selection, action === 'remove-local-lift');
+  else if (action === 'length') next = model.map(bay => bay.id === selection.bayId ? { ...bay, width } : bay);
+  else next = editCells(model, selection, action === 'height' ? { height } : action === 'decking' ? { deck } : options);
+  if (!next) return null;
+  return {
+    model: next, label: action.startsWith('remove-') ? 'Removal preview · red outline marks removed geometry' : 'Change preview · blue geometry shows the result',
+    addedCells: [],
+    changedBayIds: next.filter(bay => model.find(old => old.id === bay.id)?.width !== bay.width).map(bay => bay.id),
+    changedCells: next.flatMap(bay => bay.cells.flatMap((cell, index) => JSON.stringify(cell) !== JSON.stringify(model.find(old => old.id === bay.id)?.cells[index]) ? [{ bayId: bay.id, level: index + 1 }] : [])),
+    removedBayIds: model.filter(bay => !next!.some(item => item.id === bay.id)).map(bay => bay.id),
+    removedCells: model.flatMap(bay => {
+      const nextBay = next!.find(item => item.id === bay.id);
+      return nextBay && nextBay.cells.length < bay.cells.length ? [{ bayId: bay.id, level: selection.level }] : [];
+    }),
+  };
+}
+
+export function selectionAfterRemoval(model: ScaffoldModel, next: ScaffoldModel, selection: Selection): Selection | null {
+  const sameBay = next.find(bay => bay.id === selection.bayId);
+  if (sameBay) return { ...selection, level: Math.min(selection.level, sameBay.cells.length) };
+  const removed = model.find(bay => bay.id === selection.bayId);
+  const side = model.filter(bay => bay.side === removed?.side);
+  const index = side.findIndex(bay => bay.id === selection.bayId);
+  const neighbor = side[index + 1] ?? side[index - 1];
+  const remaining = next.find(bay => bay.id === neighbor?.id) ?? next[0];
+  return remaining ? { kind: 'Bay', bayId: remaining.id, level: Math.min(selection.level, remaining.cells.length) } : null;
 }
 
 export function partsSummary(model: ScaffoldModel, placed: ComponentPlacement[], stair: boolean) {

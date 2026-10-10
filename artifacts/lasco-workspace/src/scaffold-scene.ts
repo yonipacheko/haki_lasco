@@ -33,13 +33,15 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
     const side = new THREE.Group();
     side.rotation.y = bay.side * Math.PI / 2;
     const newBay = operation?.addedBayId === bay.id;
+    const changedBay = !!operation?.changedBayIds?.includes(bay.id);
     const total = cellElevation(bay, bay.cells.length);
     for (const bx of [x, x + bay.width]) for (const bz of [z, z + 1.15]) {
-      if (!newBay) {
+      if (!newBay && !changedBay) {
         const original = model.find(item => item.id === bay.id);
         const originalTotal = original ? cellElevation(original, original.cells.length) : 0;
-        rod(side, [bx, .12, bz], [bx, originalTotal + .25, bz], steel, { bayId: bay.id, level: 1 }, .065);
-        if (total > originalTotal) rod(side, [bx, originalTotal + .25, bz], [bx, total + .25, bz], ghost);
+        const heightChanged = originalTotal !== total && !operation?.addedCells.some(cell => cell.bayId === bay.id);
+        rod(side, [bx, .12, bz], [bx, (heightChanged ? total : originalTotal) + .25, bz], heightChanged ? ghost : steel, { bayId: bay.id, level: 1 }, .065);
+        if (total > originalTotal && !heightChanged) rod(side, [bx, originalTotal + .25, bz], [bx, total + .25, bz], ghost);
       } else rod(side, [bx, .12, bz], [bx, total + .25, bz], ghost);
       box(side, [.24, .1, .24], [bx, .05, bz], newBay ? ghost : gold);
     }
@@ -48,7 +50,7 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
     bay.cells.forEach((cell, index) => {
       const level = index + 1;
       const top = cellElevation(bay, level) + .15;
-      const isGhost = newBay || !!operation?.addedCells.some(item => item.bayId === bay.id && item.level === level);
+      const isGhost = newBay || changedBay || !!operation?.addedCells.some(item => item.bayId === bay.id && item.level === level) || !!operation?.changedCells?.some(item => item.bayId === bay.id && item.level === level);
       const hit = isGhost ? undefined : { bayId: bay.id, level };
       const structure = isGhost ? ghost : lite, protection = isGhost ? ghost : gold;
       for (const bz of [z, z + 1.15]) rod(side, [x, top, bz], [x + bay.width, top, bz], structure, hit);
@@ -69,7 +71,7 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
         }
         box(side, [bay.width - .2, .08, .55], [x + bay.width / 2, top, z - .3], isGhost ? ghost : deck, hit);
       }
-      const chosen = !isGhost && selection && (selection.kind === 'Lift' ? selection.level === level
+      const chosen = !newBay && selection && (selection.kind === 'Lift' ? selection.level === level
         : selection.bayId === bay.id && (selection.kind === 'Bay' || selection.level === level));
       if (chosen) {
         box(side, [bay.width - .04, .08, 1.19], [x + bay.width / 2, top + .025, z + .575], highlight, hit);
@@ -87,8 +89,20 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
     });
     group.add(side);
   }
-  if (stair && model.length) {
-    const { bay, x, z } = bayLayout(model).filter(item => item.bay.side === 0).at(-1)!;
+  if (operation) for (const { bay, x, z } of bayLayout(model)) {
+    const removedBay = operation.removedBayIds?.includes(bay.id);
+    const removedLevels = operation.removedCells?.filter(cell => cell.bayId === bay.id).map(cell => cell.level) ?? [];
+    if (!removedBay && !removedLevels.length) continue;
+    const bottom = removedBay ? 0 : cellElevation(bay, removedLevels[0] - 1);
+    const top = removedBay ? cellElevation(bay, bay.cells.length) : cellElevation(bay, removedLevels[0]);
+    const marker = new THREE.Group(); marker.rotation.y = bay.side * Math.PI / 2;
+    const material = new THREE.LineBasicMaterial({ color: '#c8534d' });
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(bay.width, top - bottom + .15, 1.2)), material);
+    edges.position.set(x + bay.width / 2, (top + bottom) / 2, z + .575); marker.add(edges); group.add(marker);
+  }
+  const previewModel = operation?.model ?? model;
+  if (stair && previewModel.length) {
+    const { bay, x, z } = bayLayout(previewModel).filter(item => item.bay.side === 0).at(-1)!;
     const tower = new THREE.Group(), sx = x + bay.width + .5, total = cellElevation(bay, bay.cells.length);
     for (const bx of [sx, sx + .95]) rod(tower, [bx, 0, z], [bx, total, z], steel);
     for (let step = 0; step < total * 4; step++) box(tower, [.95, .05, .25], [sx + .475, step / 4, z + (step % 12) * .09], deck);
@@ -97,7 +111,7 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
   return group;
 }
 
-export function componentScene(model: ScaffoldModel, placed: ComponentPlacement[], preview: string | null, selection: Selection | null, surface: Surface) {
+export function componentScene(model: ScaffoldModel, placed: ComponentPlacement[], preview: string | null, selection: Selection | null, surface: Surface, operation: AdditionPreview | null = null) {
   const group = new THREE.Group();
   const add = (name: string, bayId: string, level: number, isPreview: boolean) => {
     const layout = bayLayout(model).find(item => item.bay.id === bayId);
@@ -112,7 +126,11 @@ export function componentScene(model: ScaffoldModel, placed: ComponentPlacement[
     component.traverse(object => { object.userData.placement = isPreview; if (!isPreview) object.userData.hit = { bayId, level }; });
     const side = new THREE.Group(); side.add(component); side.rotation.y = bay.side * Math.PI / 2; group.add(side);
   };
-  placed.forEach(item => add(item.name, item.bayId, item.level, false));
+  placed.forEach(item => {
+    const removed = operation?.removedCells?.find(cell => cell.bayId === item.bayId);
+    if (removed && removed.level === item.level) return;
+    add(item.name, item.bayId, removed && item.level > removed.level ? item.level - 1 : item.level, false);
+  });
   if (preview && model.length) add(preview, selection?.bayId ?? model[0].id, selection?.level ?? 1, true);
   return group;
 }
