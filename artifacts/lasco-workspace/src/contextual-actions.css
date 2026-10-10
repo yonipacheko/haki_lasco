@@ -32,4 +32,9 @@
 .context-note { font-size:9px; line-height:1.5; color:#929da7; background:#f3f6f8; padding:8px; border-radius:4px; margin:4px 0 11px; }
 .context-footer { display:flex; gap:6px; justify-content:flex-end; margin-top:12px; padding-top:11px; border-top:1px solid #e8edf0; }
 @media(max-width:1000px){ .context-dock{width:248px} .main-stage.has-context .scene-host,.main-stage.has-context.right-open .scene-host{right:280px} .main-stage.has-context .canvas-controls{right:281px} .main-stage:not(.has-context) .canvas-controls{right:16px} }
-@media(max-width:740px){ .main-stage.has-context .scene-host,.main-stage.has-context.right-open .scene-host{right:0} .context-dock{width:min(84vw,290px)} .main-stage.has-context.bottom-open .context-dock{max-height:calc(100% - 340px)} .main-stage.has-context .canvas-controls{right:10px} }
+@media(max-width:740px){
+  .main-stage.has-context .scene-host,.main-stage.has-context.right-open .scene-host{right:calc(clamp(168px,42vw,248px) + 24px)}
+  .context-dock{width:clamp(168px,42vw,248px)}
+  .main-stage.has-context.bottom-open .context-dock{max-height:calc(100% - 440px)}
+  .main-stage.has-context .canvas-controls{right:calc(clamp(168px,42vw,248px) + 24px)}
+}

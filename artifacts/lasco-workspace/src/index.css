@@ -37,7 +37,7 @@ button { cursor: pointer; }
 .top-action:hover { background:#eff3f6; }
 .avatar { height:29px;width:29px;border-radius:50%;background:#dce8ef;color:#345f7d;display:grid;place-items:center;font:600 10px var(--app-font-display); }
 .main-stage { position:relative; flex:1; min-height:0; overflow:hidden; }
-.scene-host { position:absolute; inset:0; background-color:#e9eff4; background-image:linear-gradient(rgba(255,255,255,.2),rgba(255,255,255,.2)); }
+.scene-host { position:absolute; inset:0; background-color:#e9eff4; background-image:linear-gradient(rgba(255,255,255,.2),rgba(255,255,255,.2)); transition:left .22s ease, right .22s ease, bottom .22s ease; }
 .scene-host canvas, .scene-host svg { display:block; width:100%;height:100%; outline:none; touch-action:none; }
 .main-stage.left-open .scene-host { left:296px; }
 .main-stage.right-open .scene-host { right:308px; }

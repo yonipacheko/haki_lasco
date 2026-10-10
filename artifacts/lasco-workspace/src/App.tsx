@@ -7,6 +7,7 @@ import { scaffoldScene, componentScene } from './scaffold-scene';
 import { availableDirections, cellElevation, editCells, elevations, partsSummary, previewEdit, removeLift as removeModelLift, selectionAfterRemoval, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
 import { combineBounds, projectSelection } from './selection-projection';
 import type { SelectionScreenBounds } from './context-position';
+import { fitCamera, projectedFrame } from './camera-framing';
 import {
   Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Search, Shield, Star, Undo2, X,
 } from 'lucide-react';
@@ -37,6 +38,8 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
   const controlsRef = useRef<OrbitControls | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | SVGRenderer | null>(null);
   const objectsRef = useRef<THREE.Group | null>(null);
+  const frameBoundsRef = useRef(new THREE.Box3());
+  const refitRef = useRef<(() => void) | null>(null);
   const onSelectRef = useRef(onSelect); onSelectRef.current = onSelect;
   const onPlaceRef = useRef(onPlace); onPlaceRef.current = onPlace;
   const onCancelRef = useRef(onCancel); onCancelRef.current = onCancel;
@@ -79,7 +82,13 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     controls.minDistance = 7;
     controls.maxDistance = 50;
     controls.maxPolarAngle = Math.PI * .49;
+    controls.update();
+    controls.saveState();
     controlsRef.current = controls;
+    refitRef.current = () => {
+      fitCamera(camera, controls, frameBoundsRef.current, { width: host.clientWidth, height: host.clientHeight });
+      controls.update();
+    };
     const hemi = new THREE.HemisphereLight(0xffffff, 0x8293a0, 2.05);
     scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -117,25 +126,53 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     let frame = 0;
     let lastProjection = 0, lastBounds = '';
     const animate = (time = 0) => {
-      frame = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera);
+      frame = requestAnimationFrame(animate); controls.update();
+      if (scene.fog instanceof THREE.Fog) {
+        const distance = camera.position.distanceTo(controls.target);
+        scene.fog.near = Math.max(27, distance - 6);
+        scene.fog.far = Math.max(58, distance + 25);
+      }
+      renderer.render(scene, camera);
       if (time - lastProjection > 150) {
         lastProjection = time;
         const current = configRef.current;
+        const frameRect = projectedFrame(camera, frameBoundsRef.current, { width: host.clientWidth, height: host.clientHeight });
+        host.dataset.frameBounds = JSON.stringify(frameRect);
         const bounds = current.selection ? combineBounds(projectSelection(current.model, current.selection, camera, host), current.operation ? projectSelection(current.operation.model, current.selection, camera, host) : null) : null;
+        if (bounds && frameRect) {
+          // The dock must clear the same complete geometry used to fit the camera.
+          bounds.model = {
+            left: Math.min(bounds.model.left, host.offsetLeft + Math.max(0, frameRect.left)),
+            right: Math.max(bounds.model.right, host.offsetLeft + Math.min(host.clientWidth, frameRect.right)),
+            top: Math.min(bounds.model.top, host.offsetTop + Math.max(0, frameRect.top)),
+            bottom: Math.max(bounds.model.bottom, host.offsetTop + Math.min(host.clientHeight, frameRect.bottom)),
+          };
+        }
         const key = JSON.stringify(bounds, (_, value) => typeof value === 'number' ? Math.round(value / 2) * 2 : value);
         if (key !== lastBounds) { lastBounds = key; onScreenRef.current(bounds); }
       }
     };
     animate();
+    let previousSize = { width: host.clientWidth, height: host.clientHeight };
+    let previousStage = { width: host.parentElement?.clientWidth, height: host.parentElement?.clientHeight };
     const resize = () => {
       if (!host.isConnected) return;
       const width = host.clientWidth; const height = host.clientHeight;
-      camera.aspect = width / Math.max(height, 1); camera.updateProjectionMatrix(); renderer.setSize(width, height);
+      if (!width || !height) return;
+      const stage = { width: host.parentElement?.clientWidth, height: host.parentElement?.clientHeight };
+      const browserResized = stage.width !== previousStage.width || stage.height !== previousStage.height;
+      const shrank = width < previousSize.width - .5 || height < previousSize.height - .5;
+      // Keep pixel scale stable as space returns; don't restore an old camera.
+      camera.zoom *= previousSize.height / height;
+      camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height);
+      if (shrank || browserResized) fitCamera(camera, controls, frameBoundsRef.current, { width, height }, browserResized);
+      controls.update();
+      previousSize = { width, height }; previousStage = stage;
     };
     const observer = new ResizeObserver(resize); observer.observe(host);
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (configRef.current.preview || configRef.current.operation)) onCancelRef.current(); };
     window.addEventListener('keydown', onKey);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('keydown', onKey); host.removeEventListener('pointerdown', pointerDown); host.removeEventListener('pointerup', click); controls.dispose(); if (renderer instanceof THREE.WebGLRenderer) renderer.dispose(); rendererRef.current = null; host.removeChild(renderer.domElement); scene.clear(); };
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('keydown', onKey); host.removeEventListener('pointerdown', pointerDown); host.removeEventListener('pointerup', click); controls.dispose(); if (renderer instanceof THREE.WebGLRenderer) renderer.dispose(); rendererRef.current = null; refitRef.current = null; host.removeChild(renderer.domElement); scene.clear(); };
   }, []);
 
   useEffect(() => {
@@ -170,11 +207,18 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
       group.add(scaffoldScene(model, surface, selection, operation, stair));
       group.add(componentScene(operation?.model ?? model, placed, preview, selection, surface, operation));
     }
+    const bounds = new THREE.Box3().setFromObject(group);
+    const previous = frameBoundsRef.current.clone().expandByScalar(.12);
+    const grew = !previous.containsBox(bounds);
+    frameBoundsRef.current.copy(bounds);
+    // Includes snapped previews; cancelling a preview must not zoom back in.
+    if (grew) refitRef.current?.();
   }, [config]);
 
   useEffect(() => {
     if (!resetToken || !controlsRef.current) return;
     controlsRef.current.reset();
+    refitRef.current?.();
   }, [resetToken]);
   useEffect(() => {
     if (!controlsRef.current) return;

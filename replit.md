@@ -36,6 +36,8 @@ The demo supports starter scaffold generation, bay/lift/unit selection, snapped 
 
 Keep the current visual style and working features when refining contextual editing. Do not restore an always-visible Properties inspector or put routine settings in a centered dialog. Place compact, temporary controls near the selection when there is room, otherwise in a nearby clear area; never cover the selected object. Label each action's scope explicitly. Detailed choices open only after an action is chosen and close after applying or cancelling. Scaffold-changing actions preview their result before Apply, Add bay offers only available directions, and completed edits can be undone. Preserve the interactive rendering fallback when WebGL is unavailable.
 
+Keep the entire scaffold, including blue preview geometry, framed in the unobstructed canvas when contextual actions or Levels & Parts open. Preserve the orbit angle and a steady view when panels close rather than restoring an earlier camera. Layout checks should not apply demo edits.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
