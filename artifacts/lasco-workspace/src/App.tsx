@@ -9,6 +9,7 @@ import { combineBounds, projectSelection } from './selection-projection';
 import { openConcept, saveConcept } from './concept-snapshot';
 import type { SelectionScreenBounds } from './context-position';
 import { fitCamera, projectedFrame } from './camera-framing';
+import { ViewportCompass, type ViewportCompassHandle } from './viewport-compass';
 import {
   Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, FolderOpen, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Save, Search, Shield, Star, Undo2, X,
 } from 'lucide-react';
@@ -34,6 +35,7 @@ const categoryList: Category[] = ['All', 'Structure', 'Decking', 'Access', 'Prot
 
 function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, resetToken, viewMode, addingBay }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; onScreenBounds: (value: SelectionScreenBounds | null) => void; resetToken: number; viewMode: 'orbit' | 'pan'; addingBay: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const compassRef = useRef<ViewportCompassHandle>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -129,6 +131,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     let lastProjection = 0, lastBounds = '';
     const animate = (time = 0) => {
       frame = requestAnimationFrame(animate); controls.update();
+      compassRef.current?.update(camera);
       if (scene.fog instanceof THREE.Fog) {
         const distance = camera.position.distanceTo(controls.target);
         scene.fog.near = Math.max(27, distance - 6);
@@ -228,7 +231,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     if (!controlsRef.current) return;
     controlsRef.current.mouseButtons.LEFT = viewMode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
   }, [viewMode]);
-  return <div className="scene-host" ref={hostRef} aria-label="Interactive 3D scaffold workspace" />;
+  return <><div className="scene-host" ref={hostRef} aria-label="Interactive 3D scaffold workspace" /><ViewportCompass ref={compassRef} /></>;
 }
 
 function App() {

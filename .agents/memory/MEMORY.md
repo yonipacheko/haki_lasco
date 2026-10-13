@@ -1,1 +1,2 @@
 - [3D preview compatibility](3d-preview-compatibility.md) — the preview capture browser may lack WebGL; preserve an interactive rendering fallback.
+- [Workflow status after merges](workflow-status-after-merges.md) — a failed managed workflow can coexist with an older server still occupying its port.

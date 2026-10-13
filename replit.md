@@ -40,6 +40,8 @@ Keep the entire scaffold, including blue preview geometry, framed in the unobstr
 
 Add bay direction labels are world North, East, South, and West, fixed as the camera rotates. Its controls should stay near the selection in a clear area and retain readable screen size while zooming. Add bay refinements must preserve deep-part selection and the other Bay, Lift, and Unit actions.
 
+The persistent compass shows project orientation, not measured geographic North. Keep its North accent blue, its letter labels upright and high contrast, and its screen size independent of zoom. Its needles follow camera rotation without changing scaffold orientation or editing interactions.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
