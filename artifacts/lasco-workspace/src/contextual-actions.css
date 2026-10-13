@@ -22,6 +22,9 @@
 .context-directions { display:flex; gap:6px; margin:8px 0 12px; }
 .context-directions button { flex:1; }
 .context-directions button.active { background:#e5eff6; border-color:#5682a2; color:#315f84; }
+.add-bay-directions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.add-bay-directions button { height:auto; min-height:48px; padding:7px 8px; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:2px; font-size:12px; }
+.add-bay-directions button small { font-size:9px; font-weight:400; }
 .context-action:disabled { opacity:.6; cursor:not-allowed; background:#f6f8fa; }
 .context-action.danger { color:#a8403b; }
 .context-action.danger:hover:not(:disabled) { border-color:#d59a96; background:#fbf3f2; }

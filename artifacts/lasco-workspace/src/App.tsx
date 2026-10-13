@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { SVGRenderer } from 'three/examples/jsm/renderers/SVGRenderer.js';
 import { ContextualActions, type ContextualActionGroup } from './contextual-actions';
 import { scaffoldScene, componentScene } from './scaffold-scene';
-import { availableDirections, cellElevation, editCells, elevations, partsSummary, previewEdit, removeLift as removeModelLift, selectionAfterRemoval, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
+import { availableDirections, cellElevation, editCells, elevations, worldDirections, partsSummary, previewEdit, removeLift as removeModelLift, selectionAfterRemoval, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
 import { combineBounds, projectSelection } from './selection-projection';
 import type { SelectionScreenBounds } from './context-position';
 import { fitCamera, projectedFrame } from './camera-framing';
@@ -31,7 +31,7 @@ const tools: ToolItem[] = [
 ];
 const categoryList: Category[] = ['All', 'Structure', 'Decking', 'Access', 'Protection'];
 
-function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, resetToken, viewMode }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; onScreenBounds: (value: SelectionScreenBounds | null) => void; resetToken: number; viewMode: 'orbit' | 'pan' }) {
+function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, resetToken, viewMode, addingBay }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; onScreenBounds: (value: SelectionScreenBounds | null) => void; resetToken: number; viewMode: 'orbit' | 'pan'; addingBay: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -45,6 +45,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
   const onCancelRef = useRef(onCancel); onCancelRef.current = onCancel;
   const configRef = useRef(config); configRef.current = config;
   const onScreenRef = useRef(onScreenBounds); onScreenRef.current = onScreenBounds;
+  const addingBayRef = useRef(addingBay); addingBayRef.current = addingBay;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -133,7 +134,7 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
         scene.fog.far = Math.max(58, distance + 25);
       }
       renderer.render(scene, camera);
-      if (time - lastProjection > 150) {
+      if (time - lastProjection > (addingBayRef.current ? 32 : 150)) {
         lastProjection = time;
         const current = configRef.current;
         const frameRect = projectedFrame(camera, frameBoundsRef.current, { width: host.clientWidth, height: host.clientHeight });
@@ -307,11 +308,11 @@ function App() {
   };
   const toggleFavorite = (name: string) => setFavSet(prev => prev.includes(name) ? prev.filter(v => v !== name) : [...prev, name]);
   const generate = () => { remember('Generate starter scaffold'); setStarter(true); setPreview(null); selectObject({ kind: 'Bay', bayId: '0-3', level: 2 }); notify('Starter scaffold added around the building'); };
-  const directions = selection ? availableDirections(model, selection.bayId) : [];
+  const directions = selection ? availableDirections(model, selection.bayId, action === 'add-bay' ? draftWidth : undefined) : [];
   const actionGroups: ContextualActionGroup[] = !selection ? [] : selection.kind === 'Bay' ? [
     { label: 'Configure', actions: [{ id: 'length', label: 'Change length', scope: 'selected bay' }, { id: 'decking', label: 'Change decking', scope: 'selected bay' }] },
     { label: 'Extend & remove', actions: [
-      { id: 'add-bay', label: 'Add bay', scope: 'beside selected bay', disabled: !directions.length, reason: !directions.length ? 'Select an end bay with free space (six-bay limit).' : undefined },
+      { id: 'add-bay', label: 'Add bay', scope: 'beside selected bay', disabled: !directions.length, reason: !directions.length ? 'No free neighboring slot (six-bay elevation limit).' : undefined },
       { id: 'remove-bay', label: 'Remove bay', scope: 'selected bay', danger: true, disabled: model.filter(bay => bay.side === selectedBay.side).length <= 1, reason: 'Keep at least one bay per elevation.' },
     ] },
   ] : selection.kind === 'Lift' ? [
@@ -361,14 +362,14 @@ function App() {
   const detail = action && selection ? (
     <form onSubmit={event => { event.preventDefault(); applyAction(); }}>
       <p className="context-note">{selection.kind === 'Bay' ? 'Scope: selected bay only.' : selection.kind === 'Unit' ? 'Scope: this bay/lift unit only.' : action.includes('local') ? `Scope: Bay ${String(selectedBay.number).padStart(2, '0')} · ${elevations[selectedBay.side]} only.` : action === 'add-lift' ? 'Scope: a new top lift on every bay.' : `Scope: whole Lift ${selection.level} across all elevations.`}</p>
-      {action === 'add-bay' && <><div className="field-label">Choose an available direction</div><div className="context-directions" data-testid="available-directions">{directions.map(direction => <button type="button" key={direction} className={`secondary-button ${draftDirection === direction ? 'active' : ''}`} aria-pressed={draftDirection === direction} onClick={() => setDraftDirection(direction)} data-testid={`direction-${direction}`}>{direction === 'left' ? '← Left end' : 'Right end →'}</button>)}</div></>}
+      {action === 'add-bay' && <><div className="field-label">World directions · fixed as you orbit</div><div className="context-directions add-bay-directions" data-testid="available-directions">{worldDirections.map(direction => <button type="button" key={direction} className={`secondary-button ${draftDirection === direction ? 'active' : ''}`} disabled={!directions.includes(direction)} title={directions.includes(direction) ? `Add toward world ${direction}` : `${direction}: occupied, building collision, or elevation limit`} aria-label={`Add bay toward ${direction}`} aria-pressed={draftDirection === direction} onClick={() => setDraftDirection(direction)} data-testid={`direction-${direction.toLowerCase()}`}>{direction}{!directions.includes(direction) && <small>Blocked</small>}</button>)}</div></>}
       {(action === 'length' || (action === 'add-bay' && draftDirection)) && <label className="context-field">Bay length · illustrative<select value={draftWidth} onChange={event => setDraftWidth(Number(event.target.value))} data-testid="select-bay-width"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
       {(action === 'height' || action === 'add-lift' || action === 'add-local-lift') && <label className="context-field">Lift height · illustrative<select value={draftHeight} onChange={event => setDraftHeight(Number(event.target.value))} data-testid="select-lift-height"><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></label>}
       {action === 'decking' && <label className="context-field">Decking<select value={String(draftDeck)} onChange={event => setDraftDeck(event.target.value === 'true')} data-testid="select-decking"><option value="true">Included</option><option value="false">None</option></select></label>}
       {action === 'options' && (['guardrails', 'braces', 'brackets'] as const).map(key => <label className="context-check" key={key}><input type="checkbox" checked={draftOptions[key]} onChange={event => setDraftOptions(value => ({ ...value, [key]: event.target.checked }))} data-testid={`toggle-${key}`} />{key === 'guardrails' ? 'Guard frames' : key === 'braces' ? 'Braces' : 'Brackets'}</label>)}
       {action.startsWith('remove-') && <p className="context-note">Previewing removal of this {action === 'remove-bay' ? 'bay and its placed components' : 'lift and its placed components'}. Undo will restore them after applying.</p>}
       {operation && <p className="context-note preview-note" data-testid="preview-status"><strong>{action.startsWith('add-') ? 'Snapped preview' : 'Live preview'}</strong><br />{operation.label}<br />Apply commits the result. Cancel keeps the original scaffold.</p>}
-      {action === 'add-bay' && !operation && <p className="context-note">Choose a direction to show a snapped preview. Only free directions are listed.</p>}
+      {action === 'add-bay' && !operation && <p className="context-note">{draftDirection ? 'This direction is blocked at the chosen length. Choose a free direction or adjust the length.' : 'Choose a free world direction to show a snapped preview. Blocked directions cannot be added.'}</p>}
       <div className="context-footer"><button type="button" className="secondary-button" onClick={clearAction} data-testid="cancel-action">Cancel</button><button type="submit" className="primary-button" disabled={!operation} data-testid="apply-action">Apply</button></div>
     </form>
   ) : null;
@@ -386,7 +387,7 @@ function App() {
         <div className="avatar" title="Workspace user">HL</div>
       </header>
        <section className={`main-stage ${leftOpen ? 'left-open' : ''} ${selection && !preview ? 'has-context' : ''} ${bottomOpen ? 'bottom-open' : ''}`}>
-        <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} onScreenBounds={setScreenBounds} resetToken={resetToken} viewMode={viewMode} />
+        <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} onScreenBounds={setScreenBounds} resetToken={resetToken} viewMode={viewMode} addingBay={action === 'add-bay'} />
         <div className="center-top">
            <div className="scene-chip"><span className="status-dot" /> <strong>3D view</strong></div>
           <div className="scene-chip"><Ruler size={12} /> Dimensions illustrative</div>
@@ -425,7 +426,7 @@ function App() {
           </div>
         </aside>
         {!leftOpen && <button className="collapse-tab left" onClick={() => setLeftOpen(true)} title="Open toolkit" data-testid="button-open-toolkit"><ChevronRight size={15} /></button>}
-        {selection && !preview && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} screenBounds={screenBounds} />}
+        {selection && !preview && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} screenBounds={screenBounds} addingBay={action === 'add-bay'} />}
 
         <div className={`bottom-panel ${bottomOpen ? '' : 'closed'}`}>
           <div className="bottom-head">

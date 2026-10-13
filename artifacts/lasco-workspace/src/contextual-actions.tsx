@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { contextPosition, type SelectionScreenBounds } from './context-position';
+import { addBayContextPosition, contextPosition, type SelectionScreenBounds } from './context-position';
 import { ArrowLeft, X } from 'lucide-react';
 import './contextual-actions.css';
 
@@ -19,9 +19,10 @@ export interface ContextualActionsProps {
   detailTitle?: string;
   onBack: () => void;
   screenBounds?: SelectionScreenBounds | null;
+  addingBay?: boolean;
 }
 
-export function ContextualActions({ selectionLabel, selectionKind, groups, onAction, onClose, detail, detailTitle, onBack, screenBounds = null }: ContextualActionsProps) {
+export function ContextualActions({ selectionLabel, selectionKind, groups, onAction, onClose, detail, detailTitle, onBack, screenBounds = null, addingBay = false }: ContextualActionsProps) {
   const inDetail = detail !== null && detail !== undefined;
   const dockRef = useRef<HTMLElement>(null);
   const [position, setPosition] = useState({ left: 0, top: 16, placement: 'clear-area' });
@@ -32,13 +33,15 @@ export function ContextualActions({ selectionLabel, selectionKind, groups, onAct
     const update = () => {
       const scene = stage.querySelector<HTMLElement>('.scene-host');
       const area = { left: (scene?.offsetLeft ?? 0) + 16, right: stage.clientWidth - 16, top: 104, bottom: (scene?.clientHeight ?? stage.clientHeight) - 12 };
-      const next = contextPosition(screenBounds, area, dock.offsetWidth, dock.offsetHeight);
-      setPosition(previous => previous.left === next.left && previous.top === next.top && previous.placement === next.placement ? previous : next);
+      setPosition(previous => {
+        const next = addingBay ? addBayContextPosition(screenBounds, area, dock.offsetWidth, dock.offsetHeight, previous) : contextPosition(screenBounds, area, dock.offsetWidth, dock.offsetHeight);
+        return previous.left === next.left && previous.top === next.top && previous.placement === next.placement ? previous : next;
+      });
     };
     update();
     const observer = new ResizeObserver(update); observer.observe(dock); observer.observe(stage);
     return () => observer.disconnect();
-  }, [screenBounds, detail, groups]);
+  }, [screenBounds, detail, groups, addingBay]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;

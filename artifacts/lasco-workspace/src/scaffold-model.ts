@@ -2,7 +2,9 @@ export const elevations = ['North', 'East', 'South', 'West'];
 export type SelectionKind = 'Bay' | 'Lift' | 'Unit';
 export type Selection = { kind: SelectionKind; bayId: string; level: number };
 export type CellOptions = { height: number; deck: boolean; guardrails: boolean; braces: boolean; brackets: boolean };
-export type ScaffoldBay = { id: string; side: number; number: number; width: number; cells: CellOptions[] };
+export type ScaffoldBay = { id: string; side: number; number: number; width: number; cells: CellOptions[]; position?: { x: number; z: number } };
+export const worldDirections = ['North', 'East', 'South', 'West'] as const;
+export type WorldDirection = typeof worldDirections[number];
 export type ScaffoldModel = ScaffoldBay[];
 export type AdditionPreview = { model: ScaffoldModel; label: string; addedBayId?: string; addedCells: { bayId: string; level: number }[]; changedBayIds?: string[]; changedCells?: { bayId: string; level: number }[]; removedCells?: { bayId: string; level: number }[]; removedBayIds?: string[] };
 export type ComponentPlacement = { id: number; name: string; bayId: string; level: number };
@@ -26,7 +28,8 @@ export function selectionLabel(selection: Selection, model: ScaffoldModel) {
 
 export function bayLayout(model: ScaffoldModel) {
   return model.map(bay => {
-    const side = model.filter(item => item.side === bay.side);
+    if (bay.position) return { bay, ...bay.position };
+    const side = model.filter(item => item.side === bay.side && !item.position);
     const index = side.findIndex(item => item.id === bay.id);
     const anchor = side.findIndex(item => item.number === Math.min(...side.map(item => item.number)));
     const offset = side.slice(0, anchor).reduce((sum, item) => sum + item.width, 0);
@@ -55,23 +58,43 @@ export function editCells(model: ScaffoldModel, selection: Selection, changes: P
   }) }));
 }
 
-export function availableDirections(model: ScaffoldModel, bayId: string) {
-  const bay = model.find(item => item.id === bayId);
-  if (!bay) return [];
-  const side = model.filter(item => item.side === bay.side);
-  if (side.length >= 6) return [];
-  return [
-    ...(side[0].id === bayId ? ['left'] : []),
-    ...(side[side.length - 1].id === bayId ? ['right'] : []),
-  ];
+const bayDepth = 1.15;
+function footprint(side: number, x: number, z: number, width: number) {
+  const rotate = (a: number, b: number) => side === 0 ? [a, b] : side === 1 ? [b, -a] : side === 2 ? [-a, -b] : [-b, a];
+  const points = [x, x + width].flatMap(a => [z, z + bayDepth].map(b => rotate(a, b)));
+  return { left: Math.min(...points.map(p => p[0])), right: Math.max(...points.map(p => p[0])), bottom: Math.min(...points.map(p => p[1])), top: Math.max(...points.map(p => p[1])) };
+}
+
+function neighboringPosition(model: ScaffoldModel, bayId: string, direction: WorldDirection, width: number) {
+  const source = bayLayout(model).find(item => item.bay.id === bayId);
+  if (!source) return null;
+  const vectors = { North: [0, 1], East: [1, 0], South: [0, -1], West: [-1, 0] };
+  const [wx, wz] = vectors[direction];
+  const cos = [1, 0, -1, 0][source.bay.side], sin = [0, 1, 0, -1][source.bay.side];
+  const dx = wx * cos - wz * sin, dz = wx * sin + wz * cos;
+  return { x: source.x + (dx > 0 ? source.bay.width : dx < 0 ? -width : 0), z: source.z + dz * bayDepth };
+}
+
+export function availableDirections(model: ScaffoldModel, bayId: string, width?: number): WorldDirection[] {
+  const source = model.find(bay => bay.id === bayId);
+  const length = width ?? source?.width ?? 0;
+  if (!source || !Number.isFinite(length) || length <= 0 || model.filter(bay => bay.side === source.side).length >= 6) return [];
+  const occupied = bayLayout(model).map(({ bay, x, z }) => footprint(bay.side, x, z, bay.width));
+  occupied.push({ left: -3.9, right: 3.9, bottom: -3, top: 3 });
+  return worldDirections.filter(direction => {
+    const position = neighboringPosition(model, bayId, direction, length)!;
+    const candidate = footprint(source.side, position.x, position.z, length);
+    return !occupied.some(rect => candidate.left < rect.right - .00001 && candidate.right > rect.left + .00001 && candidate.bottom < rect.top - .00001 && candidate.top > rect.bottom + .00001);
+  });
 }
 
 export function previewBay(model: ScaffoldModel, bayId: string, direction: string, width: number): AdditionPreview | null {
-  if (!availableDirections(model, bayId).includes(direction)) return null;
+  if (!availableDirections(model, bayId, width).some(value => value === direction)) return null;
   const source = model.find(item => item.id === bayId)!;
   const number = Math.max(...model.filter(bay => bay.side === source.side).map(bay => bay.number)) + 1;
-  const bay: ScaffoldBay = { ...source, id: `${source.side}-${number}`, number, width, cells: source.cells.map(cell => ({ ...cell })) };
-  const index = model.findIndex(item => item.id === bayId) + (direction === 'right' ? 1 : 0);
+  const position = neighboringPosition(model, bayId, direction as WorldDirection, width)!;
+  const bay: ScaffoldBay = { ...source, id: `${source.side}-${number}`, number, width, position, cells: source.cells.map(cell => ({ ...cell })) };
+  const index = model.findIndex(item => item.id === bayId) + 1;
   const candidate = [...model];
   candidate.splice(index, 0, bay);
   return { model: candidate, addedBayId: bay.id, addedCells: [], label: `Neighboring bay · ${direction} · ${width.toFixed(1)} m` };

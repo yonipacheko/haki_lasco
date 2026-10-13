@@ -38,6 +38,8 @@ Keep the current visual style and working features when refining contextual edit
 
 Keep the entire scaffold, including blue preview geometry, framed in the unobstructed canvas when contextual actions or Levels & Parts open. Preserve the orbit angle and a steady view when panels close rather than restoring an earlier camera. Layout checks should not apply demo edits.
 
+Add bay direction labels are world North, East, South, and West, fixed as the camera rotates. Its controls should stay near the selection in a clear area and retain readable screen size while zooming. Add bay refinements must preserve deep-part selection and the other Bay, Lift, and Unit actions.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._
