@@ -42,6 +42,8 @@ Add bay choices are the actual free neighboring slots, shown with outlined posit
 
 The persistent compass shows project orientation, not measured geographic North. Keep its North accent blue, its letter labels upright and high contrast, and its screen size independent of zoom. Its needles follow camera rotation without changing scaffold orientation or editing interactions.
 
+Select inside is a temporary part-inspection mode, separate from normal Bay/Lift/Unit selection. Reveal hidden components through reversible translucency and identify a specific part by type, level, bay, elevation, and position. If parts overlap under the pointer, offer the actual hit parts rather than invisible selection volumes. Exit must restore normal materials. Base jack height is an illustrative, session-only setting: Apply/Cancel do not change scaffold geometry, perform engineering calculations, or alter saved concepts. Preserve Add bay, the compass, and the existing Bay/Lift/Unit actions.
+
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._

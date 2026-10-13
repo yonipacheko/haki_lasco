@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { createComponent } from './scaffold-component';
-import { bayLayout, cellElevation, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection } from './scaffold-model';
+import { bayLayout, cellElevation, elevations, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection } from './scaffold-model';
+import type { ScaffoldPart } from './inside-selection';
 
 type Surface = (color: string, roughness?: number, opacity?: number, metalness?: number) => THREE.Material;
 
@@ -14,18 +15,30 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
   const ghost = surface('#318ac4', .6, .5);
   const highlight = surface('#d4a85f', .6, .45);
   const selectedEdge = new THREE.MeshBasicMaterial({ color: '#db901d' });
-  const rod = (parent: THREE.Group, a: number[], b: number[], mat: THREE.Material, hit?: { bayId: string; level: number }, radius = .05) => {
+  const annotate = (mesh: THREE.Mesh, type: string, hit: { bayId: string; level: number } | undefined, detail = '') => {
+    const bay = model.find(item => item.id === hit?.bayId);
+    const material = mesh.material as THREE.Material;
+    if (!hit || !bay || !material.visible || material === ghost || material === highlight || material === selectedEdge) return;
+    mesh.userData.part = {
+      id: `${bay.id}:${type}:${hit.level}:${mesh.position.toArray().join(',')}`,
+      type, bayId: bay.id, level: hit.level, bayNumber: bay.number, elevation: elevations[bay.side], detail,
+      center: mesh.position.toArray(),
+    } satisfies ScaffoldPart;
+  };
+  const rod = (parent: THREE.Group, a: number[], b: number[], mat: THREE.Material, hit?: { bayId: string; level: number }, radius = .05, type = 'Ledger') => {
     const start = new THREE.Vector3(...a), end = new THREE.Vector3(...b), delta = end.clone().sub(start);
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 8), mat);
     mesh.position.copy(start.add(end).multiplyScalar(.5));
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
     if (hit) mesh.userData.hit = hit;
+    annotate(mesh, type, hit);
     parent.add(mesh);
   };
-  const box = (parent: THREE.Group, size: number[], position: number[], material: THREE.Material, hit?: { bayId: string; level: number }) => {
+  const box = (parent: THREE.Group, size: number[], position: number[], material: THREE.Material, hit?: { bayId: string; level: number }, type = 'Steel deck', partHit = hit, detail = '') => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size as [number, number, number]), material);
     mesh.position.set(...position as [number, number, number]);
     if (hit) mesh.userData.hit = hit;
+    annotate(mesh, type, partHit, detail);
     parent.add(mesh);
   };
   const layouts = bayLayout(operation?.model ?? model);
@@ -40,10 +53,11 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
         const original = model.find(item => item.id === bay.id);
         const originalTotal = original ? cellElevation(original, original.cells.length) : 0;
         const heightChanged = originalTotal !== total && !operation?.addedCells.some(cell => cell.bayId === bay.id);
-        rod(side, [bx, .12, bz], [bx, (heightChanged ? total : originalTotal) + .25, bz], heightChanged ? ghost : steel, { bayId: bay.id, level: 1 }, .065);
+        rod(side, [bx, .12, bz], [bx, (heightChanged ? total : originalTotal) + .25, bz], heightChanged ? ghost : steel, { bayId: bay.id, level: 1 }, .065, 'Standard');
         if (total > originalTotal && !heightChanged) rod(side, [bx, originalTotal + .25, bz], [bx, total + .25, bz], ghost);
       } else rod(side, [bx, .12, bz], [bx, total + .25, bz], ghost);
-      box(side, [.24, .1, .24], [bx, .05, bz], newBay ? ghost : gold);
+      // Metadata only: the existing jack plate and normal scope picking stay unchanged.
+      box(side, [.24, .1, .24], [bx, .05, bz], newBay ? ghost : gold, undefined, 'Base jack', newBay ? undefined : { bayId: bay.id, level: 1 }, `${bz === z ? 'Inner' : 'Outer'} edge · ${bx === x ? 'Start' : 'End'} post`);
     }
     rod(side, [x, .15, z], [x + bay.width, .15, z], newBay ? ghost : lite, newBay ? undefined : { bayId: bay.id, level: 1 });
     let bottom = .15;
@@ -57,17 +71,17 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
       for (const bx of [x, x + bay.width]) rod(side, [bx, top, z], [bx, top, z + 1.15], structure, hit);
       if (cell.deck) box(side, [bay.width - .1, .1, 1.04], [x + bay.width / 2, top - .1, z + .575], isGhost ? ghost : deck, hit);
       if (cell.guardrails) {
-        for (const y of [top + .45, top + .95]) rod(side, [x, y, z + 1.15], [x + bay.width, y, z + 1.15], protection, hit, .033);
-        for (const bx of [x, x + bay.width]) rod(side, [bx, top, z + 1.15], [bx, top + 1.02, z + 1.15], structure, hit, .04);
+        for (const y of [top + .45, top + .95]) rod(side, [x, y, z + 1.15], [x + bay.width, y, z + 1.15], protection, hit, .033, 'Guardrail');
+        for (const bx of [x, x + bay.width]) rod(side, [bx, top, z + 1.15], [bx, top + 1.02, z + 1.15], structure, hit, .04, 'Guardrail');
       }
       if (cell.braces) {
-        rod(side, [x, bottom, z + 1.15], [x + bay.width, top, z + 1.15], structure, hit, .035);
-        rod(side, [x + bay.width, bottom, z + 1.15], [x, top, z + 1.15], structure, hit, .035);
+        rod(side, [x, bottom, z + 1.15], [x + bay.width, top, z + 1.15], structure, hit, .035, 'Diagonal brace');
+        rod(side, [x + bay.width, bottom, z + 1.15], [x, top, z + 1.15], structure, hit, .035, 'Diagonal brace');
       }
       if (cell.brackets) {
         for (const bx of [x + .2, x + bay.width - .2]) {
-          rod(side, [bx, top, z], [bx, top, z - .6], protection, hit);
-          rod(side, [bx, top - .5, z], [bx, top, z - .6], protection, hit);
+          rod(side, [bx, top, z], [bx, top, z - .6], protection, hit, .05, 'Bracket');
+          rod(side, [bx, top - .5, z], [bx, top, z - .6], protection, hit, .05, 'Bracket');
         }
         box(side, [bay.width - .2, .08, .55], [x + bay.width / 2, top, z - .3], isGhost ? ghost : deck, hit);
       }
@@ -113,7 +127,7 @@ export function scaffoldScene(model: ScaffoldModel, surface: Surface, selection:
 
 export function componentScene(model: ScaffoldModel, placed: ComponentPlacement[], preview: string | null, selection: Selection | null, surface: Surface, operation: AdditionPreview | null = null) {
   const group = new THREE.Group();
-  const add = (name: string, bayId: string, level: number, isPreview: boolean) => {
+  const add = (name: string, bayId: string, level: number, isPreview: boolean, placementId?: number) => {
     const layout = bayLayout(model).find(item => item.bay.id === bayId);
     if (!layout) return;
     const { bay, x, z } = layout;
@@ -123,13 +137,22 @@ export function componentScene(model: ScaffoldModel, placed: ComponentPlacement[
     material.depthWrite = !isPreview;
     const component = createComponent(name, material, bay.width, cell.height);
     component.position.set(x + bay.width / 2, cellElevation(bay, level) + .1, z);
-    component.traverse(object => { object.userData.placement = isPreview; if (!isPreview) object.userData.hit = { bayId, level }; });
+    component.traverse(object => {
+      object.userData.placement = isPreview;
+      if (!isPreview) {
+        object.userData.hit = { bayId, level };
+        if ((object as THREE.Mesh).isMesh) object.userData.part = {
+          id: `placed:${placementId}`, type: name, bayId, level, bayNumber: bay.number,
+          elevation: elevations[bay.side], detail: 'Placed component', center: [0, 0, 0],
+        } satisfies ScaffoldPart;
+      }
+    });
     const side = new THREE.Group(); side.add(component); side.rotation.y = bay.side * Math.PI / 2; group.add(side);
   };
   placed.forEach(item => {
     const removed = operation?.removedCells?.find(cell => cell.bayId === item.bayId);
     if (removed && removed.level === item.level) return;
-    add(item.name, item.bayId, removed && item.level > removed.level ? item.level - 1 : item.level, false);
+    add(item.name, item.bayId, removed && item.level > removed.level ? item.level - 1 : item.level, false, item.id);
   });
   if (preview && model.length) add(preview, selection?.bayId ?? model[0].id, selection?.level ?? 1, true);
   return group;

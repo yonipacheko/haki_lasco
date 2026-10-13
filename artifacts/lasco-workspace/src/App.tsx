@@ -7,6 +7,8 @@ import { scaffoldScene, componentScene } from './scaffold-scene';
 import { availableBayPositions, availableDirections, cellElevation, editCells, elevations, partsSummary, previewEdit, removeLift as removeModelLift, selectionAfterRemoval, selectionLabel, starterModel, targetCells, type AdditionPreview, type BayPosition, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind, type WorldDirection } from './scaffold-model';
 import { bayPositionGuides } from './bay-position-guides';
 import { BayPositionOverlay, type BayPositionOverlayHandle } from './bay-position-overlay';
+import { insideCandidates, InsideViewTreatment, partLocation, type InsidePoint, type ScaffoldPart } from './inside-selection';
+import { InsideModeControl, InsideSelectionOverlay } from './inside-selection-ui';
 import { combineBounds, projectSelection } from './selection-projection';
 import { openConcept, saveConcept } from './concept-snapshot';
 import type { SelectionScreenBounds } from './context-position';
@@ -35,7 +37,7 @@ const tools: ToolItem[] = [
 ];
 const categoryList: Category[] = ['All', 'Structure', 'Decking', 'Access', 'Protection'];
 
-function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, resetToken, viewMode, addingBay, onChoosePosition }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; onScreenBounds: (value: SelectionScreenBounds | null) => void; resetToken: number; viewMode: 'orbit' | 'pan'; addingBay: boolean; onChoosePosition: (direction: WorldDirection) => void }) {
+function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, resetToken, viewMode, addingBay, onChoosePosition, insideMode, insidePart, onInsidePick, onInsideMarker }: { config: SceneConfig; onSelect: (value: Selection | null) => void; onPlace: () => void; onCancel: () => void; onScreenBounds: (value: SelectionScreenBounds | null) => void; resetToken: number; viewMode: 'orbit' | 'pan'; addingBay: boolean; onChoosePosition: (direction: WorldDirection) => void; insideMode: boolean; insidePart: ScaffoldPart | null; onInsidePick: (parts: ScaffoldPart[], point: InsidePoint) => void; onInsideMarker: (point: InsidePoint | null) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const compassRef = useRef<ViewportCompassHandle>(null);
   const positionsRef = useRef<BayPositionOverlayHandle>(null);
@@ -53,6 +55,9 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
   const configRef = useRef(config); configRef.current = config;
   const onScreenRef = useRef(onScreenBounds); onScreenRef.current = onScreenBounds;
   const addingBayRef = useRef(addingBay); addingBayRef.current = addingBay;
+  const insideRef = useRef({ insideMode, insidePart, onInsidePick, onInsideMarker });
+  insideRef.current = { insideMode, insidePart, onInsidePick, onInsideMarker };
+  const treatmentRef = useRef(new InsideViewTreatment());
 
   useEffect(() => {
     const host = hostRef.current;
@@ -121,6 +126,13 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
+      if (insideRef.current.insideMode) {
+        const parts = insideCandidates(raycaster, group);
+        const stage = host.parentElement!;
+        const sr = stage.getBoundingClientRect();
+        insideRef.current.onInsidePick(parts, { x: event.clientX - sr.left + stage.scrollLeft, y: event.clientY - sr.top + stage.scrollTop });
+        return;
+      }
       const hit = raycaster.intersectObjects(group.children, true).find(x => x.object.userData.hit || x.object.userData.selectable);
       // Layout previews only apply via their explicit confirmation controls.
       if (configRef.current.operation) return;
@@ -135,6 +147,9 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     let lastProjection = 0, lastBounds = '';
     const animate = (time = 0) => {
       frame = requestAnimationFrame(animate); controls.update();
+      if (insideRef.current.insideMode) treatmentRef.current.update(group, camera, insideRef.current.insidePart?.id ?? null);
+      else treatmentRef.current.restore();
+      host.dataset.insideMode = insideRef.current.insideMode ? 'active' : 'normal';
       compassRef.current?.update(camera);
       positionsRef.current?.update(camera, host, geometryBoundsRef.current);
       if (scene.fog instanceof THREE.Fog) {
@@ -146,6 +161,22 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
       if (time - lastProjection > (addingBayRef.current ? 32 : 150)) {
         lastProjection = time;
         const current = configRef.current;
+        if (insideRef.current.insideMode) {
+          const project = (center: number[]) => {
+            const point = new THREE.Vector3(...center as [number, number, number]).project(camera);
+            return { x: host.offsetLeft + (point.x + 1) * host.clientWidth / 2, y: host.offsetTop + (1 - point.y) * host.clientHeight / 2, visible: point.z >= -1 && point.z <= 1 && Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1 };
+          };
+          insideRef.current.onInsideMarker(insideRef.current.insidePart ? project(insideRef.current.insidePart.center) : null);
+          // Actual projected jack locations let browser checks point at a mesh, not bypass picking.
+          const jacks: (ScaffoldPart & InsidePoint)[] = [];
+          group.traverse(object => {
+            const part = object.userData.part as ScaffoldPart | undefined;
+            if (part?.type !== 'Base jack') return;
+            const center = new THREE.Box3().setFromObject(object).getCenter(new THREE.Vector3()).toArray() as [number, number, number];
+            jacks.push({ ...part, center, ...project(center) });
+          });
+          host.dataset.insideJacks = JSON.stringify(jacks);
+        } else delete host.dataset.insideJacks;
         const frameRect = projectedFrame(camera, frameBoundsRef.current, { width: host.clientWidth, height: host.clientHeight });
         host.dataset.frameBounds = JSON.stringify(frameRect);
         const bounds = current.selection ? combineBounds(projectSelection(current.model, current.selection, camera, host), current.operation ? projectSelection(current.operation.model, current.selection, camera, host) : null) : null;
@@ -182,12 +213,13 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     const observer = new ResizeObserver(resize); observer.observe(host);
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (configRef.current.preview || configRef.current.operation)) onCancelRef.current(); };
     window.addEventListener('keydown', onKey);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('keydown', onKey); host.removeEventListener('pointerdown', pointerDown); host.removeEventListener('pointerup', click); controls.dispose(); if (renderer instanceof THREE.WebGLRenderer) renderer.dispose(); rendererRef.current = null; refitRef.current = null; host.removeChild(renderer.domElement); scene.clear(); };
+    return () => { cancelAnimationFrame(frame); treatmentRef.current.restore(); observer.disconnect(); window.removeEventListener('keydown', onKey); host.removeEventListener('pointerdown', pointerDown); host.removeEventListener('pointerup', click); controls.dispose(); if (renderer instanceof THREE.WebGLRenderer) renderer.dispose(); rendererRef.current = null; refitRef.current = null; host.removeChild(renderer.domElement); scene.clear(); };
   }, []);
 
   useEffect(() => {
     const scene = sceneRef.current; const group = objectsRef.current;
     if (!scene || !group) return;
+    treatmentRef.current.restore();
     while (group.children.length) {
       const child = group.children.pop();
       if (child) child.traverse(obj => { const mesh = obj as THREE.Mesh; mesh.geometry?.dispose(); if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose()); else mesh.material?.dispose(); });
@@ -267,6 +299,28 @@ function App() {
   const [notice, setNotice] = useState('');
   const [resetToken, setResetToken] = useState(0);
   const [viewMode, setViewMode] = useState<'orbit' | 'pan'>('orbit');
+  const [insideMode, setInsideMode] = useState(false);
+  const [insidePart, setInsidePart] = useState<ScaffoldPart | null>(null);
+  const [insideHits, setInsideHits] = useState<ScaffoldPart[]>([]);
+  const [insidePointer, setInsidePointer] = useState<InsidePoint | null>(null);
+  const [insideMarker, setInsideMarker] = useState<InsidePoint | null>(null);
+  const [adjustingJack, setAdjustingJack] = useState(false);
+  const [jackDraft, setJackDraft] = useState(150);
+  const [jackSettings, setJackSettings] = useState<Record<string, number>>({});
+  const clearInsidePart = () => { setInsidePart(null); setInsideHits([]); setInsidePointer(null); setInsideMarker(null); setAdjustingJack(false); };
+  const exitInside = () => { setInsideMode(false); clearInsidePart(); };
+  const chooseInsidePart = (part: ScaffoldPart) => {
+    setInsidePart(part); setInsideHits([]); setInsidePointer(null); setInsideMarker(null);
+    setAdjustingJack(false); setJackDraft(jackSettings[part.id] ?? 150);
+  };
+  const pickInside = (parts: ScaffoldPart[], point: InsidePoint) => {
+    setAdjustingJack(false);
+    if (parts.length === 1) chooseInsidePart(parts[0]);
+    else if (parts.length) { setInsideHits(parts); setInsidePointer(point); }
+    else { setInsideHits([]); setInsidePointer(null); notify('No scaffold part at this point. Try a base jack at a post foot.'); }
+  };
+  const updateInsideMarker = useCallback((point: InsidePoint | null) => setInsideMarker(previous =>
+    point && previous && Math.abs(point.x - previous.x) < 1 && Math.abs(point.y - previous.y) < 1 && point.visible === previous.visible ? previous : point), []);
   const toastRef = useRef<number | null>(null);
   const notify = useCallback((message: string, duration = 2400) => {
     setNotice(message);
@@ -285,6 +339,7 @@ function App() {
   const open = () => {
     try {
       const concept = openConcept(window.localStorage);
+      exitInside();
       remember('Open saved concept');
       setModel(concept.model); setPlaced(concept.placed); setStair(concept.stair); setStarter(concept.starter);
       setSelection(null); setAction(null); setPreview(null); setScreenBounds(null);
@@ -296,6 +351,7 @@ function App() {
   const undo = useCallback(() => {
     const previous = history.at(-1);
     if (!previous) return;
+    exitInside();
     setModel(previous.model); setPlaced(previous.placed); setStair(previous.stair); setStarter(previous.starter);
     setSelection(previous.selection); if (previous.selection) setSelectionMode(previous.selection.kind);
     setHistory(items => items.slice(0, -1)); setAction(null); setPreview(null); setScreenBounds(null);
@@ -322,7 +378,7 @@ function App() {
   const activeLevel = selection?.level ?? 1;
   const selected = selection ? selectionLabel(selection, model) : 'Building';
   const clearAction = () => { setAction(null); };
-  const selectObject = (value: Selection | null) => { clearAction(); setScreenBounds(null); setPreview(null); setSelection(value); if (value) setSelectionMode(value.kind); };
+  const selectObject = (value: Selection | null) => { exitInside(); clearAction(); setScreenBounds(null); setPreview(null); setSelection(value); if (value) setSelectionMode(value.kind); };
   const cancelPlacement = useCallback(() => { setPreview(null); setAction(null); notify('Preview cancelled'); }, [notify]);
   const place = useCallback(() => {
     if (!preview) return;
@@ -337,6 +393,7 @@ function App() {
     setPreview(null);
   }, [preview, notify, selectedBay, activeLevel, remember]);
   const chooseTool = (name: string) => {
+    exitInside();
     clearAction();
     setPreview(name);
     setRecent(prev => [name, ...prev.filter(item => item !== name)].slice(0, 3));
@@ -423,16 +480,17 @@ function App() {
          <button className="top-action" onClick={() => notify('Choose Bay, Lift or Unit, then click the scaffold. Drag to orbit, scroll to zoom. Shift-click selects a lift.')} data-testid="button-help"><CircleHelp size={16} /><span>Help</span></button>
         <div className="avatar" title="Workspace user">HL</div>
       </header>
-       <section className={`main-stage ${leftOpen ? 'left-open' : ''} ${selection && !preview ? 'has-context' : ''} ${bottomOpen ? 'bottom-open' : ''}`}>
-        <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} onScreenBounds={setScreenBounds} resetToken={resetToken} viewMode={viewMode} addingBay={action === 'add-bay'} onChoosePosition={setDraftDirection} />
+       <section className={`main-stage ${leftOpen ? 'left-open' : ''} ${(selection && !preview) || insideMode ? 'has-context' : ''} ${bottomOpen ? 'bottom-open' : ''}`}>
+        <ThreeViewport config={config} onSelect={selectObject} onPlace={place} onCancel={cancelPlacement} onScreenBounds={setScreenBounds} resetToken={resetToken} viewMode={viewMode} addingBay={action === 'add-bay'} onChoosePosition={setDraftDirection} insideMode={insideMode} insidePart={insidePart} onInsidePick={pickInside} onInsideMarker={updateInsideMarker} />
         <div className="center-top">
            <div className="scene-chip"><span className="status-dot" /> <strong>3D view</strong></div>
           <div className="scene-chip"><Ruler size={12} /> Dimensions illustrative</div>
-           <div className="scene-chip selection-chip"><strong>{selected}</strong></div>
+           <div className="scene-chip selection-chip" title={insideMode && insidePart ? `${insidePart.type} · ${partLocation(insidePart)}` : selected}><strong>{insideMode ? insidePart ? `${insidePart.type} · Level ${insidePart.level} · Bay ${String(insidePart.bayNumber).padStart(2, '0')}` : 'Select inside' : selected}</strong></div>
         </div>
          {starter && <div className="selection-bar" aria-label="Selection mode">
-           <span>Select</span>{(['Bay', 'Lift', 'Unit'] as const).map(kind => <button key={kind} className={selectionMode === kind ? 'active' : ''} aria-pressed={selectionMode === kind} data-testid={`select-mode-${kind.toLowerCase()}`} onClick={() => { clearAction(); setPreview(null); setSelectionMode(kind); if (selection) setSelection({ ...selection, kind, level: Math.min(selection.level, selectedBay.cells.length) }); }}>{kind}</button>)}
-           <span className="selection-hint">Click scaffold · Shift-click lift</span>
+           <span>Select</span>{(['Bay', 'Lift', 'Unit'] as const).map(kind => <button key={kind} className={!insideMode && selectionMode === kind ? 'active' : ''} aria-pressed={!insideMode && selectionMode === kind} data-testid={`select-mode-${kind.toLowerCase()}`} onClick={() => { exitInside(); clearAction(); setPreview(null); setSelectionMode(kind); if (selection) setSelection({ ...selection, kind, level: Math.min(selection.level, selectedBay.cells.length) }); }}>{kind}</button>)}
+           <InsideModeControl active={insideMode} onToggle={() => { if (insideMode) exitInside(); else { clearAction(); setPreview(null); clearInsidePart(); setInsideMode(true); } }} />
+           <span className="selection-hint">{insideMode ? 'Point to a part · Click to choose' : 'Click scaffold · Shift-click lift'}</span>
          </div>}
         <div className="canvas-controls">
           <button className={`view-button ${viewMode === 'orbit' ? 'active' : ''}`} title="Orbit view" onClick={() => { setViewMode('orbit'); setResetToken(v => v + 1); }} data-testid="button-orbit"><RotateCcw size={14} /></button>
@@ -463,7 +521,13 @@ function App() {
           </div>
         </aside>
         {!leftOpen && <button className="collapse-tab left" onClick={() => setLeftOpen(true)} title="Open toolkit" data-testid="button-open-toolkit"><ChevronRight size={15} /></button>}
-        {selection && !preview && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} screenBounds={screenBounds} addingBay={action === 'add-bay'} />}
+        {selection && !preview && !insideMode && <ContextualActions selectionLabel={selected} selectionKind={selection.kind} groups={actionGroups} onAction={beginAction} onClose={() => selectObject(null)} detail={detail} detailTitle={actionTitle} onBack={clearAction} screenBounds={screenBounds} addingBay={action === 'add-bay'} />}
+        {insideMode && <InsideSelectionOverlay candidates={insideHits} chooserPosition={insidePointer} selected={insidePart} marker={insideMarker} adjusting={adjustingJack} draftHeight={jackDraft} appliedHeight={insidePart ? jackSettings[insidePart.id] ?? null : null}
+          onChoose={chooseInsidePart} onDismissChooser={() => { setInsideHits([]); setInsidePointer(null); }}
+          onAdjust={() => { if (insidePart?.type === 'Base jack') { setJackDraft(jackSettings[insidePart.id] ?? 150); setAdjustingJack(true); } }}
+          onHeightChange={setJackDraft} onApply={() => { if (insidePart?.type !== 'Base jack') return; setJackSettings(settings => ({ ...settings, [insidePart.id]: jackDraft })); setAdjustingJack(false); notify('Illustrative base jack setting applied · session only; geometry unchanged.'); }}
+          onCancel={() => { setJackDraft(insidePart ? jackSettings[insidePart.id] ?? 150 : 150); setAdjustingJack(false); }}
+          onExit={exitInside} onClear={clearInsidePart} />}
 
         <div className={`bottom-panel ${bottomOpen ? '' : 'closed'}`}>
           <div className="bottom-head">
