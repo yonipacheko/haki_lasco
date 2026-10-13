@@ -88,6 +88,47 @@ export function availableDirections(model: ScaffoldModel, bayId: string, width?:
   });
 }
 
+export type BayPosition = {
+  direction: WorldDirection;
+  kind: 'run' | 'side';
+  label: string;
+  shortLabel: string;
+  x: number;
+  z: number;
+  side: number;
+  width: number;
+  footprint: { left: number; right: number; bottom: number; top: number };
+  center: { x: number; z: number };
+  attachment: { x: number; z: number };
+};
+
+/** Physical slots, identified in world space rather than by the current screen direction. */
+export function availableBayPositions(model: ScaffoldModel, bayId: string, width?: number): BayPosition[] {
+  const source = bayLayout(model).find(item => item.bay.id === bayId);
+  if (!source) return [];
+  const length = width ?? source.bay.width;
+  const original = footprint(source.bay.side, source.x, source.z, source.bay.width);
+  return availableDirections(model, bayId, length).map(direction => {
+    const position = neighboringPosition(model, bayId, direction, length)!;
+    const rect = footprint(source.bay.side, position.x, position.z, length);
+    const alongRun = Math.abs(position.z - source.z) < .00001;
+    const outer = position.z > source.z;
+    const sharedX = (Math.max(original.left, rect.left) + Math.min(original.right, rect.right)) / 2;
+    const sharedZ = (Math.max(original.bottom, rect.bottom) + Math.min(original.top, rect.top)) / 2;
+    return {
+      direction, kind: alongRun ? 'run' : 'side',
+      label: alongRun ? 'Next bay along this side' : outer ? 'Add on the outer side of this run' : 'Add on the inner side of this run',
+      shortLabel: alongRun ? 'Along run' : outer ? 'Outer side' : 'Inner side',
+      ...position, side: source.bay.side, width: length, footprint: rect,
+      center: { x: (rect.left + rect.right) / 2, z: (rect.bottom + rect.top) / 2 },
+      attachment: {
+        x: direction === 'East' ? original.right : direction === 'West' ? original.left : sharedX,
+        z: direction === 'North' ? original.top : direction === 'South' ? original.bottom : sharedZ,
+      },
+    };
+  });
+}
+
 export function previewBay(model: ScaffoldModel, bayId: string, direction: string, width: number): AdditionPreview | null {
   if (!availableDirections(model, bayId, width).some(value => value === direction)) return null;
   const source = model.find(item => item.id === bayId)!;
@@ -97,7 +138,8 @@ export function previewBay(model: ScaffoldModel, bayId: string, direction: strin
   const index = model.findIndex(item => item.id === bayId) + 1;
   const candidate = [...model];
   candidate.splice(index, 0, bay);
-  return { model: candidate, addedBayId: bay.id, addedCells: [], label: `Neighboring bay · ${direction} · ${width.toFixed(1)} m` };
+  const slot = availableBayPositions(model, bayId, width).find(item => item.direction === direction)!;
+  return { model: candidate, addedBayId: bay.id, addedCells: [], label: `${slot.label} · ${direction} · ${width.toFixed(1)} m` };
 }
 
 export function previewLift(model: ScaffoldModel, bayId: string, onlyBay: boolean, height: number): AdditionPreview | null {

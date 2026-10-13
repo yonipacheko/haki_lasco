@@ -33,6 +33,7 @@
 .context-field > :is(input,select):focus { border-color:#7fa5c0; box-shadow:0 0 0 2px rgba(73,125,164,.1); }
 .context-check { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:11px; color:#596d7e; }
 .context-note { font-size:9px; line-height:1.5; color:#929da7; background:#f3f6f8; padding:8px; border-radius:4px; margin:4px 0 11px; }
+.add-position-help { color:#40576a; line-height:1.6; }
 .context-footer { display:flex; gap:6px; justify-content:flex-end; margin-top:12px; padding-top:11px; border-top:1px solid #e8edf0; }
 @media(max-width:1000px){ .context-dock{width:248px} .main-stage.has-context .scene-host,.main-stage.has-context.right-open .scene-host{right:280px} .main-stage.has-context .canvas-controls{right:281px} .main-stage:not(.has-context) .canvas-controls{right:16px} }
 @media(max-width:740px){

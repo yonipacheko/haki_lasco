@@ -38,7 +38,7 @@ Keep the current visual style and working features when refining contextual edit
 
 Keep the entire scaffold, including blue preview geometry, framed in the unobstructed canvas when contextual actions or Levels & Parts open. Preserve the orbit angle and a steady view when panels close rather than restoring an earlier camera. Layout checks should not apply demo edits.
 
-Add bay direction labels are world North, East, South, and West, fixed as the camera rotates. Its controls should stay near the selection in a clear area and retain readable screen size while zooming. Add bay refinements must preserve deep-part selection and the other Bay, Lift, and Unit actions.
+Add bay choices are the actual free neighboring slots, shown with outlined positions and attached controls. Distinguish extending the current run from adding on its outer or inner side. Compass directions are secondary world references, never screen-left/right placement rules. Controls must follow their intended slot through orbit, retain readable screen size during zoom, and keep the selection and nearby details clear. Preview the exact chosen slot before Apply; hide occupied positions. Add bay refinements must preserve the compass, deep-part selection, and the other Bay, Lift, and Unit actions.
 
 The persistent compass shows project orientation, not measured geographic North. Keep its North accent blue, its letter labels upright and high contrast, and its screen size independent of zoom. Its needles follow camera rotation without changing scaffold orientation or editing interactions.
 

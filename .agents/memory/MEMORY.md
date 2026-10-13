@@ -1,2 +1,3 @@
 - [3D preview compatibility](3d-preview-compatibility.md) — the preview capture browser may lack WebGL; preserve an interactive rendering fallback.
 - [Workflow status after merges](workflow-status-after-merges.md) — a failed managed workflow can coexist with an older server still occupying its port.
+- [Overlay coordinate spaces](overlay-coordinate-spaces.md) — native focus can scroll overflow-hidden canvases; projected anchors and UI obstacles must use the same coordinate space.
