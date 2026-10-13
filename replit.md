@@ -32,7 +32,7 @@ _Populate as you build — non-obvious choices a reader couldn't infer from the 
 
 The user explicitly requested a UX demonstration, not production scaffolding or engineering software. Keep the 3D model visible, dock routine tools and settings outside it, and clearly label all sample counts, dimensions and indicators as illustrative.
 
-The demo supports starter scaffold generation, bay/lift/unit selection, snapped component placement, scaffold configuration, and a level/parts comparison panel. State is session-only; no construction validation or verified calculations are provided.
+The demo supports starter scaffold generation, bay/lift/unit selection, snapped component placement, scaffold configuration, and a level/parts comparison panel. It starts fresh on reload. Explicit Save concept and Open concept actions use one validated, versioned browser-local snapshot; saving replaces the previous save and excludes active previews. Opening is undoable. This is not server-backed storage or collaboration, and no construction validation or verified calculations are provided.
 
 Keep the current visual style and working features when refining contextual editing. Do not restore an always-visible Properties inspector or put routine settings in a centered dialog. Place compact, temporary controls near the selection when there is room, otherwise in a nearby clear area; never cover the selected object. Label each action's scope explicitly. Detailed choices open only after an action is chosen and close after applying or cancelling. Scaffold-changing actions preview their result before Apply, Add bay offers only available directions, and completed edits can be undone. Preserve the interactive rendering fallback when WebGL is unavailable.
 

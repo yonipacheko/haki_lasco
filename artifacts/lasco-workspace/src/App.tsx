@@ -6,10 +6,11 @@ import { ContextualActions, type ContextualActionGroup } from './contextual-acti
 import { scaffoldScene, componentScene } from './scaffold-scene';
 import { availableDirections, cellElevation, editCells, elevations, worldDirections, partsSummary, previewEdit, removeLift as removeModelLift, selectionAfterRemoval, selectionLabel, starterModel, targetCells, type AdditionPreview, type ComponentPlacement, type ScaffoldModel, type Selection, type SelectionKind } from './scaffold-model';
 import { combineBounds, projectSelection } from './selection-projection';
+import { openConcept, saveConcept } from './concept-snapshot';
 import type { SelectionScreenBounds } from './context-position';
 import { fitCamera, projectedFrame } from './camera-framing';
 import {
-  Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Search, Shield, Star, Undo2, X,
+  Activity, AlignCenter, ArrowUp, Box, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Columns3, Eye, FolderOpen, Grid2X2, Layers3, Move, Plus, RotateCcw, Ruler, Save, Search, Shield, Star, Undo2, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -206,6 +207,8 @@ function ThreeViewport({ config, onSelect, onPlace, onCancel, onScreenBounds, re
     group.add(building);
     if (starter) {
       group.add(scaffoldScene(model, surface, selection, operation, stair));
+    }
+    if (starter || preview) {
       group.add(componentScene(operation?.model ?? model, placed, preview, selection, surface, operation));
     }
     const bounds = new THREE.Box3().setFromObject(group);
@@ -255,12 +258,31 @@ function App() {
   const [resetToken, setResetToken] = useState(0);
   const [viewMode, setViewMode] = useState<'orbit' | 'pan'>('orbit');
   const toastRef = useRef<number | null>(null);
-  const notify = useCallback((message: string) => {
+  const notify = useCallback((message: string, duration = 2400) => {
     setNotice(message);
     if (toastRef.current) window.clearTimeout(toastRef.current);
-    toastRef.current = window.setTimeout(() => setNotice(''), 2400);
+    toastRef.current = window.setTimeout(() => setNotice(''), duration);
   }, []);
   const remember = useCallback((label: string) => setHistory(items => [...items, { label, model, placed, stair, starter, selection }].slice(-30)), [model, placed, stair, starter, selection]);
+  const save = () => {
+    try {
+      saveConcept(window.localStorage, { model, placed, stair, starter });
+      notify('Concept saved in this browser only. Previous save replaced; previews not saved.', 6000);
+    } catch (error) {
+      notify(error instanceof Error && error.name !== 'SecurityError' ? error.message : 'Save failed: browser storage is unavailable.', 6000);
+    }
+  };
+  const open = () => {
+    try {
+      const concept = openConcept(window.localStorage);
+      remember('Open saved concept');
+      setModel(concept.model); setPlaced(concept.placed); setStair(concept.stair); setStarter(concept.starter);
+      setSelection(null); setAction(null); setPreview(null); setScreenBounds(null);
+      notify('Saved concept opened from this browser. Undo restores your previous concept.', 6000);
+    } catch (error) {
+      notify(error instanceof Error && error.name !== 'SecurityError' ? error.message : 'Open failed: browser storage is unavailable. Current concept unchanged.', 6000);
+    }
+  };
   const undo = useCallback(() => {
     const previous = history.at(-1);
     if (!previous) return;
@@ -302,7 +324,6 @@ function App() {
   }, [preview, notify, selectedBay, activeLevel, remember]);
   const chooseTool = (name: string) => {
     clearAction();
-    setStarter(true);
     setPreview(name);
     setRecent(prev => [name, ...prev.filter(item => item !== name)].slice(0, 3));
   };
@@ -379,9 +400,11 @@ function App() {
       <header className="topbar">
         <div className="brand"><div className="brand-mark">H</div><div><div className="brand-name">HAKI <span style={{ fontWeight: 500 }}>LASCO</span></div><div className="brand-sub">SCAFFOLD WORKSPACE</div></div></div>
         <div className="top-divider" />
-        <div><div className="project-name">Scaffold concept 01</div><div className="project-meta">Untitled project&nbsp; / &nbsp;Local demo</div></div>
+        <div className="project-info"><div className="project-name">Scaffold concept 01</div><div className="project-meta">Local demo&nbsp; / &nbsp;Browser-only saves</div></div>
         <div className="top-spacer" />
          <div className="saved"><Check size={13} /> Session prototype</div>
+         <button className="top-action concept-action" onClick={save} aria-label="Save concept" title="Save committed concept in this browser only; replaces the previous save. Previews are not saved." data-testid="button-save-concept"><Save size={16} /><span>Save concept</span></button>
+         <button className="top-action concept-action" onClick={open} aria-label="Open concept" title="Open the last concept saved in this browser. Undo restores the current concept." data-testid="button-open-concept"><FolderOpen size={16} /><span>Open concept</span></button>
          <button className="top-action" disabled={!history.length} onClick={undo} title={history.length ? `Undo ${history.at(-1)?.label} (Ctrl/Cmd+Z)` : 'No completed changes to undo'} data-testid="button-undo"><Undo2 size={16} /><span>Undo</span></button>
          <button className="top-action" onClick={() => notify('Choose Bay, Lift or Unit, then click the scaffold. Drag to orbit, scroll to zoom. Shift-click selects a lift.')} data-testid="button-help"><CircleHelp size={16} /><span>Help</span></button>
         <div className="avatar" title="Workspace user">HL</div>
