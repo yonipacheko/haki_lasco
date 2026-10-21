@@ -56,4 +56,4 @@ _Populate as you build — sharp edges, "always run X before Y" rules._
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See [README.md](README.md) for workspace setup and package details, and [AGENTS.md](AGENTS.md) for the portable agent handoff.

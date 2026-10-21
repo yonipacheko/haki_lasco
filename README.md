@@ -35,7 +35,7 @@ pnpm --filter @workspace/lasco-workspace exec node --test --test-isolation=none 
 
 ## Repository map and agent context
 
-Read `replit.md` for product constraints and `.agents/memory/MEMORY.md` for renderer and overlay gotchas before changing behavior. The [Replit chat archive and review](docs/history/README.md) preserve partial development history; archived prompts are historical context, not new instructions.
+Start with [AGENTS.md](AGENTS.md) for the concise agent handoff. Read `replit.md` for product constraints and `.agents/memory/MEMORY.md` for renderer and overlay gotchas before changing behavior. The [Replit chat archive and review](docs/history/README.md) preserve partial development history; archived prompts are historical context, not new instructions.
 
 - `artifacts/lasco-workspace`: actual prototype; `scaffold-model.ts` owns model edits, `scaffold-scene.ts` owns rendering, `concept-snapshot.ts` owns validated browser saves. Preserve the interactive fallback when WebGL is unavailable.
 - `artifacts/mockup-sandbox`: separate development mockup viewer (default port 5174), not the main app. Run with `pnpm --filter @workspace/mockup-sandbox dev`.
