@@ -12,7 +12,7 @@ const storage = () => {
 
 test('round trip restores edited geometry, placements, stair and starter state', () => {
   const concept = state();
-  concept.model = previewBay(concept.model, '0-1', 'left', 2).model;
+  concept.model = previewBay(concept.model, '0-1', 'North', 2).model;
   concept.model = previewLift(concept.model, '0-1', true, 2.5).model;
   concept.model = editCells(concept.model, { kind: 'Unit', bayId: '0-1', level: 2 }, { deck: false, brackets: true });
   concept.placed = [{ id: 42, name: 'Stair flight', bayId: '0-1', level: 4 }];
@@ -21,6 +21,28 @@ test('round trip restores edited geometry, placements, stair and starter state',
   for (const key of Object.keys(concept)) assert.deepEqual(loaded[key], concept[key]);
   loaded.model[0].cells[0].deck = false;
   assert.equal(concept.model[0].cells[0].deck, true);
+});
+
+test('saving an added bay preserves its exact position on reopen and leaves legacy saves readable', () => {
+  const browser = storage(), concept = state();
+  concept.model = previewBay(concept.model, '1-1', 'North', 2.5).model;
+  saveConcept(browser, concept);
+  const loaded = openConcept(browser);
+  assert.equal(loaded.model.length, 13);
+  assert.deepEqual(loaded.model, concept.model);
+  const added = loaded.model.find(bay => bay.id === '1-4');
+  assert.ok(added.position);
+  added.position.x += 1;
+  assert.deepEqual(openConcept(browser).model, concept.model);
+  assert.deepEqual(parseConcept(serializeConcept(state())).model, starterModel());
+});
+
+test('optional bay positions reject malformed coordinates and unexpected fields', () => {
+  for (const position of [null, [], {}, { x: 1 }, { x: '1', z: 2 }, { x: null, z: 2 }, { x: 1, z: Infinity }, { x: 1, z: 2, extra: 3 }]) {
+    const saved = snapshot();
+    saved.model[0].position = position;
+    assert.throws(() => parseConcept(JSON.stringify(saved)), /malformed/);
+  }
 });
 
 test('empty workspace state is preserved and transient fields are excluded', () => {

@@ -49,7 +49,14 @@ export function parseConcept(text: string): ConceptSnapshot {
   const ids = new Set<string>();
   const sideCounts = [0, 0, 0, 0];
   const model: ScaffoldModel = root.model.map(value => {
-    const bay = record(value, ['id', 'side', 'number', 'width', 'cells']);
+    const hasPosition = !!value && typeof value === 'object' && Object.hasOwn(value, 'position');
+    const bay = record(value, ['id', 'side', 'number', 'width', 'cells', ...(hasPosition ? ['position'] : [])]);
+    let position: { x: number; z: number } | undefined;
+    if (hasPosition) {
+      const point = record(bay.position, ['x', 'z']);
+      if (typeof point.x !== 'number' || !Number.isFinite(point.x) || typeof point.z !== 'number' || !Number.isFinite(point.z)) return invalid();
+      position = { x: point.x, z: point.z };
+    }
     const id = identifier(bay.id);
     const side = integer(bay.side, 0);
     const number = integer(bay.number);
@@ -57,7 +64,7 @@ export function parseConcept(text: string): ConceptSnapshot {
     ids.add(id);
     sideCounts[side]++;
     if (!Array.isArray(bay.cells) || bay.cells.length < 1 || bay.cells.length > 5) return invalid();
-    return { id, side, number, width: dimension(bay.width), cells: bay.cells.map(value => {
+    return { id, side, number, width: dimension(bay.width), ...(position ? { position } : {}), cells: bay.cells.map(value => {
       const cell = record(value, ['height', 'deck', 'guardrails', 'braces', 'brackets']);
       return { height: dimension(cell.height), deck: boolean(cell.deck), guardrails: boolean(cell.guardrails), braces: boolean(cell.braces), brackets: boolean(cell.brackets) };
     }) };

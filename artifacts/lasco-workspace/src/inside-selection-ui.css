@@ -1,4 +1,5 @@
 .inside-overlay { position:absolute; inset:0; z-index:4; pointer-events:none; }
+.inside-overlay[data-choosing="true"] { z-index:7; }
 .inside-overlay button, .inside-overlay input, .inside-chooser, .inside-panel, .inside-banner { pointer-events:auto; }
 
 .inside-banner { position:absolute; display:flex; align-items:center; gap:10px; max-width:min(560px, calc(100% - 32px)); padding:6px 6px 6px 10px; background:rgba(252,253,254,.96); border:1px solid #b9d6e8; border-radius:5px; box-shadow:0 4px 14px rgba(49,70,89,.08); color:#5d7183; font-size:10px; }

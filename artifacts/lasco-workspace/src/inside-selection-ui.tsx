@@ -86,7 +86,7 @@ export function InsideSelectionOverlay(p: InsideSelectionOverlayProps) {
   const changed = p.appliedHeight !== null && p.draftHeight !== p.appliedHeight;
 
   return (
-    <div ref={rootRef} className="inside-overlay" data-testid="inside-overlay">
+    <div ref={rootRef} className="inside-overlay" data-testid="inside-overlay" data-choosing={showChooser || undefined}>
       <div className="inside-banner" style={{ left: area.left + 16, bottom: Math.max(64, (rootRef.current?.parentElement?.clientHeight ?? 0) - area.bottom + 64) }}>
         <span className="inside-banner-tag">Select inside</span>
         <span className="inside-banner-text">Front scaffold is translucent. Click a part to select it; overlapping hits open a list. Esc exits.</span>
