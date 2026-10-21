@@ -1,3 +1,4 @@
 - [3D preview compatibility](3d-preview-compatibility.md) — the preview capture browser may lack WebGL; preserve an interactive rendering fallback.
 - [Workflow status after merges](workflow-status-after-merges.md) — a failed managed workflow can coexist with an older server still occupying its port.
 - [Overlay coordinate spaces](overlay-coordinate-spaces.md) — native focus can scroll overflow-hidden canvases; projected anchors and UI obstacles must use the same coordinate space.
+- [Independent setup](../../README.md) — Node 24 / pnpm 10.34.0; `pnpm dev` starts the browser-only prototype, no DB or Replit secrets required. See `docs/replit-migration-verification.md` for verification limits and the existing saved-concept test fixture failure. Do not run the historical Replit post-merge database push during setup.
