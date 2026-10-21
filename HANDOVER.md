@@ -116,3 +116,12 @@ This demo is frontend-driven. Saved concepts remain browser-local, and base-jack
 illustrative settings are session-only; neither is an engineering calculation.
 See `replit.md` for the existing product constraints. Cross-platform package
 overrides and broader portability cleanup were not changed in this task.
+
+## GitHub delivery blocker
+
+The fixes, regression tests, and this handover were committed locally on `main`.
+`git push origin main` was attempted, but GitHub rejected the configured
+credentials: “Invalid username or token. Password authentication is not
+supported for Git operations.” The task's commits have **not** been pushed to
+GitHub. Restore valid GitHub Git authentication, then run `git push origin main`.
+No credentials were requested in chat and no remote history was rewritten.
