@@ -9,6 +9,10 @@ Environment: Codex Cloud, Linux x64, Node.js 24.19.0, pnpm 10.34.0, system Chrom
 - `pnpm test`: five test files pass, one fails. Running with `--test-isolation=none` exposes **54 passing tests and one failing test**.
 - Existing failure: `artifacts/lasco-workspace/scripts/concept-snapshot.test.mjs:15`, “round trip restores edited geometry, placements, stair and starter state”. Its `previewBay(..., '0-1', 'left', 2)` returns null and the fixture dereferences `.model`. The model and test files are identical to the pre-migration commit; this failure was not repaired as part of the runtime migration. Other snapshot validation and persistence tests pass.
 
+## Additional existing limitation identified from the chat archive
+
+The owner-supplied [partial Replit chat export](history/README.md) explicitly notes strict snapshot rejection of positioned bays. Source inspection confirms `previewBay` creates a `position` field while `parseConcept` rejects that extra field. Saving a concept after Add bay therefore fails validation; opening a snapshot containing those positions also fails. The browser save/open checks below used a starter scaffold and a placed Ledger, not an added bay. This limitation is unchanged and was not repaired as part of the migration.
+
 ## Browser checks
 
 At 1440 × 1000, repeated the following on the dev server in both the WebGL renderer (software ANGLE/SwiftShader) and the SVG fallback (Chromium launched with `--disable-webgl`):

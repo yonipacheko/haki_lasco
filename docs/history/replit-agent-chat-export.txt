@@ -1,0 +1,203 @@
+HAKI LASCO WORKSPACE — CHAT EXPORT
+=================================
+
+ABOUT THIS EXPORT
+This file contains the user and assistant conversation available at export time.
+Earlier conversation was retained only as a summary and is included below as
+such; it cannot be reproduced as a complete verbatim transcript.
+
+Tool calls/results, internal instructions, automatic environment notices, and
+automatically reopened source-code snapshots are not included as chat messages.
+This is a conversation export, not an export of the project's source code.
+
+
+EARLIER CONVERSATION — RETAINED SUMMARY, NOT VERBATIM
+===================================================
+
+Project goal
+------------
+Refine ONLY the existing HAKI Lasco Add bay interaction: users choose actual open
+neighboring positions attached to the selected bay, rather than compass
+directions alone. Distinguish extending the current run from adding alongside
+it; compass direction is secondary context. Controls must remain attached to the
+intended world slot through orbit/zoom. Selecting a slot shows exact snapped
+translucent blue geometry, with occupied/unavailable positions omitted.
+
+Preserve Apply/Cancel/Undo, selected bay visibility, surrounding details,
+compass, other Bay/Lift/Unit actions, and deep-part picking. Browser-check end
+and middle bays, along-run and other-side positions, rotation and zoom.
+
+Progress recorded in the earlier summary
+---------------------------------------
+- Added availableBayPositions in scaffold-model.ts: valid slots reuse existing
+  collision/limit checks and neighboring positions. Each describes run vs side,
+  outer/inner labels, actual world footprint/center and shared-edge attachment.
+  North = +Z, East = +X remains unchanged. Preview labels identify physical
+  relationship before cardinal direction.
+- Added non-pickable dashed world-space slot footprints and shared-edge
+  connections in bay-position-guides.ts. Guides appear only during Add bay;
+  actual blue scaffold appears only after choosing.
+- Integrated BayPositionOverlay into ThreeViewport. It receives slots, selected
+  direction and selected-level deck height; projects continuously each
+  animation frame. Separate actual-geometry bounds exclude guides for control
+  avoidance; framing bounds include guides to keep them visible.
+- Replaced the sidebar direction grid with instructions/relationship legend
+  and an always-available bay-length selector for Add bay. Apply/Cancel/Undo
+  code was unchanged.
+- Completed overlay component/CSS and pure bay-slot-layout helper. Fixed-size
+  132 × 48 labeled buttons use leaders/dots at exact projected slot centers.
+  Layout avoids selected geometry, panels and other cards, with placement
+  hysteresis. Only controls intercept pointers; original scene ray picking
+  was untouched.
+- At the time of that summary, 43 scoped compass/model/framing/position tests,
+  TypeScript, and production build passed. Tests included exact preview
+  footprint/shared-edge matching across all starter bays and widths 2/2.5/3,
+  occupied-slot removal, end/middle classification, camera-independent slot
+  identity and clear card layout.
+- Browser verification had not yet started at the time of the earlier summary.
+  Its subsequent results are recorded in the conversation below.
+
+Decisions and constraints recorded earlier
+------------------------------------------
+- User instruction: “Refine only the existing ‘Add bay’ interaction.”
+- User instruction: “Don’t change the compass, other Bay/Lift/Unit actions, or
+  deep-part selection.”
+- Placement remains existing validated physical world geometry, not screen
+  left/right. UI may move a label to clear space, but its leader stays on the
+  exact slot center and dashed world footprint.
+- Expected starter slots: East 1-1 has North along-run and East outer-side;
+  East 1-2 only East outer-side; West 3-3 has North along-run and West outer-side.
+  Occupied run neighbors are correctly hidden.
+- Overlay cards expose bay-slot-north/east/south/west test identifiers, slot
+  kind, world center and world attachment. Control text puts short physical
+  relationship before secondary direction/width.
+- Behind-camera slots hide.
+- An unrelated merged Save/Open incompatibility was intentionally untouched:
+  legacy snapshot fixture calls and strict snapshot rejection of positioned
+  bays. Do not interpret the scoped test results as a passing full suite.
+- No new follow-up feature proposals were requested.
+- No open questions were recorded.
+
+
+AVAILABLE CONVERSATION
+======================
+
+ASSISTANT
+---------
+The direction-only picker is now replaced by controls connected to outlined,
+open slots beside the selected bay. The controls distinguish “Along run” from
+“Outer side” or “Inner side,” with the compass direction shown underneath.
+
+Checks confirm that each control maps to the exact snapped preview footprint
+and that occupied positions are hidden. I’m now testing end and middle bays in
+the browser, including rotation, zoom, Cancel, and Apply/Undo.
+
+
+ASSISTANT
+---------
+The browser check confirmed that the previews stayed in their intended slots
+and that Cancel and Apply/Undo worked. It also caught a placement card slipping
+partly behind the action panel in one view. I’m fixing that overlap so the
+controls stay fully readable rather than accepting it as a minor issue.
+
+
+ASSISTANT
+---------
+Refined only Add bay:
+
+- Open slots now have outlines and attached placement controls.
+- Labels distinguish Along run from Outer/Inner side, with compass directions
+  as secondary context.
+- Occupied positions are hidden.
+- Choosing a slot shows its exact snapped, translucent blue preview before
+  Apply.
+- Controls follow their slots through rotation and zoom without scaling with
+  the model.
+
+Verified end and middle bays, both placement types, Cancel, and Apply/Undo.
+Fixed the panel overlap found during testing. Type checks, build, and 44
+relevant tests pass.
+
+The compass, other Bay/Lift/Unit actions, and deep-part selection are unchanged.
+
+
+USER
+----
+Add a focused way to select scaffold parts hidden inside a dense scaffold.
+
+Add a temporary “Select inside” mode in the 3D view. When active, make the front
+scaffold components translucent enough to reveal the interior, while keeping
+the scaffold’s overall shape visible.
+
+Use a Base jack hidden behind the front scaffold as the main selection test.
+Let the user point to and select that specific jack. Clearly highlight it; if
+several parts overlap at the pointer, show a small chooser with each part’s
+type and location, such as “Base jack · Level 1 · Bay 03.”
+
+After selection, show its contextual action, “Adjust base jack,” with a simple
+illustrative height control and clear Apply and Cancel options. Keep the
+adjustment clearly marked as a prototype interaction, not an engineering
+calculation.
+
+Let the user exit Select inside at any time and restore the normal view.
+Don’t change Add bay, the compass, other Bay/Lift/Unit actions, or scaffold
+geometry.
+
+Check the flow on a dense scaffold: select a base jack hidden behind other
+parts, confirm its type and location, adjust its illustrative height, then
+Cancel or Apply and exit the mode. Confirm the scaffold returns to its normal
+view.
+
+
+ASSISTANT
+---------
+I’ll add Select inside as a temporary viewing and picking mode, with an
+overlap chooser and a clearly marked prototype adjustment for the selected
+base jack. I’ll keep scaffold geometry and the existing editing actions
+unchanged, then check the hidden-jack flow in the browser.
+
+
+ASSISTANT
+---------
+Select inside now picks actual component meshes rather than the invisible
+Bay/Lift/Unit selection volumes. It can offer a jack behind a front standard
+in the chooser, with its level, bay, elevation, and post position identified.
+
+The height control stores an illustrative, session-only setting; it does not
+move the jack or alter scaffold geometry. I’m checking the hidden-jack
+interaction and normal-view restoration now.
+
+
+ASSISTANT
+---------
+Added Select inside to the 3D selection bar.
+
+- Front components become translucent while the scaffold’s shape remains
+  visible.
+- Overlapping parts open a chooser showing type, level, bay, elevation, and
+  position.
+- The selected jack gets a blue highlight and marker.
+- Adjust base jack provides an illustrative height slider with Apply and
+  Cancel, clearly marked as a session-only prototype.
+- Exit or Escape restores the normal view.
+
+Browser-verified a Level 1 · Bay 03 base jack hidden behind a standard,
+including Cancel, Apply, and exiting during an unapplied adjustment.
+
+Scaffold geometry, Add bay, the compass, and existing Bay/Lift/Unit actions
+remain unchanged. Type checks, build, and 17 focused tests pass.
+
+
+USER
+----
+could u export all this content entered in this chat as a downloadable text file?
+
+
+ASSISTANT
+---------
+I’ll create a downloadable text file of the conversation available to me.
+Older messages are only available as a summary, so I’ll label that section
+clearly rather than present it as a complete verbatim transcript.
+
+
+END OF EXPORT
