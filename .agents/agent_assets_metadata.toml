@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "Vv_NYvDeF5roqqvoCjI2j"
+uri = "file://exports/haki-lasco-chat-transcript.txt"
+type = "text"
+title = "HAKI Lasco chat transcript"
+description = "Downloadable text export of the available conversation, with older content clearly marked as a retained summary."
+logical_id = "e7c3836b-7e28-41fe-8ff8-acc70f1df646"
+content_hash = "sha256:18d296b10210e601dca4dd9c17db50e56019b7ee69dbcf7512194aef39fd215b"
+size = 9124
+mtime_ms = 1792580263102
+storage_uri = "gcs://replit-rams-assets-picard/rams/assets/repl:e4b15cc3-83b8-4732-a7c5-2e54c8495257/e7c3836b-7e28-41fe-8ff8-acc70f1df646/8664fd1b-d153-4e5b-91a0-ea64631d9cd5"
+storage_version_token = "1792580267958217"
+content_type = "text/plain"
