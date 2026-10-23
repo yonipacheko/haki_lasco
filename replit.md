@@ -4,12 +4,14 @@ An interactive desktop-first UX demonstration of scaffold design around a simple
 
 ## Run & Operate
 
+See README.md for current independent setup and verification. `pnpm dev` runs the browser prototype; no database is needed for it.
+
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Optional DB tooling only: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
@@ -54,4 +56,4 @@ _Populate as you build — sharp edges, "always run X before Y" rules._
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See [README.md](README.md) for workspace setup and package details, and [AGENTS.md](AGENTS.md) for the portable agent handoff.
